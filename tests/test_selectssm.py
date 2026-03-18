@@ -87,8 +87,7 @@ class TestBidirectionalMamba:
 
 class TestRCPS:
     def test_wrapper_shape(self, rng):
-        inner = nn.Dense(features=32)
-        model = RCPSWrapper(inner_module=inner)
+        model = RCPSWrapper(module_cls=nn.Dense, module_kwargs={'features': 32})
         x = jax.random.normal(rng, (2, 16, 64))  # 2D=64 -> D=32
         params = model.init(rng, x)
         y = model.apply(params, x)
@@ -96,8 +95,7 @@ class TestRCPS:
 
     def test_equivariance(self, rng):
         """RC(f(x)) == f(RC(x)) for RCPSWrapper."""
-        inner = nn.Dense(features=32)
-        model = RCPSWrapper(inner_module=inner)
+        model = RCPSWrapper(module_cls=nn.Dense, module_kwargs={'features': 32})
         x = jax.random.normal(rng, (1, 16, 64))
         params = model.init(rng, x)
 
@@ -117,7 +115,7 @@ class TestRCPS:
 
     def test_embedding(self, rng):
         cmap = [3, 2, 1, 0]  # ACGT complement
-        model = RCPSEmbedding(vocab_size=4, features=16, complement_map=cmap)
+        model = RCPSEmbedding(vocab_size=4, d_model=16, complement_map=cmap)
         tokens = jnp.array([[0, 1, 2, 3]])
         params = model.init(rng, tokens)
         y = model.apply(params, tokens)
