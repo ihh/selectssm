@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "selectssm"
+version = "0.1.0"
+description = "Selective SSM (Mamba) with chunked, recursive, and custom-VJP scanning strategies for JAX/Flax"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "jax>=0.4.20",
+    "flax>=0.7.0",
+    "einops>=0.7.0",
+]
+
+[project.optional-dependencies]
+gpu = ["jax[cuda12]>=0.4.20"]
+tpu = ["jax[tpu]>=0.4.20"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
