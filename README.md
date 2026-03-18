@@ -7,7 +7,7 @@ Based on [Mamba: Linear-Time Sequence Modeling with Selective State Spaces](http
 ## Modules
 
 - **`SelectiveSSM`** — Unidirectional selective state space model with causal convolution, configurable scanning strategy, and optional RC-complement reversal.
-- **`BidirectionalMamba`** — Bidirectional wrapper combining forward and reverse `SelectiveSSM` instances with gated output projection. Supports RC-equivariance for RNA via tied projections and complement reversal.
+- **`BidirectionalMamba`** — Bidirectional wrapper combining forward and reverse `SelectiveSSM` instances with gated output projection. Supports RC-equivariance for DNA/RNA via tied projections and complement reversal.
 
 ## Scanning strategies
 
