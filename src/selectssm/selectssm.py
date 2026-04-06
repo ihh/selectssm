@@ -160,7 +160,7 @@ class SelectiveSSM(nn.Module):
         else:
             dt_rank = self.dt_rank
 
-        if train and 'ssm_input_norm' in self.diagnostics:
+        if self.diagnostics and 'ssm_input_norm' in self.diagnostics:
             self.sow("diagnostics", "ssm_input_mean", jnp.mean(x))
             self.sow("diagnostics", "ssm_input_sd", jnp.std(x))
 
@@ -173,7 +173,7 @@ class SelectiveSSM(nn.Module):
             use_bias=False, name="shift_conv",
             kernel_init=nn.initializers.lecun_normal())(x)  # (B, L, D)
 
-        if train and 'ssm_coeffs' in self.diagnostics:
+        if self.diagnostics and 'ssm_coeffs' in self.diagnostics:
             self.sow("diagnostics", "conv_mean", jnp.mean(u))
             self.sow("diagnostics", "conv_sd", jnp.std(u))
 
@@ -196,7 +196,7 @@ class SelectiveSSM(nn.Module):
                        kernel_init=nn.initializers.lecun_normal(),
                        bias_init=nn.initializers.zeros if self.dt_proj else dt_bias_init) (u)  # (B, L, dt_rank)
 
-        if train and 'ssm_coeffs' in self.diagnostics:
+        if self.diagnostics and 'ssm_coeffs' in self.diagnostics:
             self.sow("diagnostics", "dt_lowrank_mean", jnp.mean(dt))
             self.sow("diagnostics", "dt_lowrank_sd", jnp.std(dt))
 
@@ -209,7 +209,7 @@ class SelectiveSSM(nn.Module):
                 dt = jnp.repeat (dt, D // dt_rank, axis=-1)  # (B, L, D)
         dt = nn.activation.softplus (dt)  # (B, L, D) or (B, L, 1)
 
-        if train and 'ssm_coeffs' in self.diagnostics:
+        if self.diagnostics and 'ssm_coeffs' in self.diagnostics:
             self.sow("diagnostics", "activated_conv_mean", jnp.mean(u))
             self.sow("diagnostics", "activated_conv_sd", jnp.std(u))
             self.sow("diagnostics", "dt_mean", jnp.mean(dt))
@@ -230,7 +230,7 @@ class SelectiveSSM(nn.Module):
         if self.reverse:
             y = jnp.flip (y, axis=(-2,-1) if self.complement else -2)
 
-        if train and 'ssm_residual' in self.diagnostics:
+        if self.diagnostics and 'ssm_residual' in self.diagnostics:
             self.sow("diagnostics", "ssm_residual_mean", jnp.mean(y))
             self.sow("diagnostics", "ssm_residual_sd", jnp.std(y))
 
@@ -238,7 +238,7 @@ class SelectiveSSM(nn.Module):
         y = y + jnp.einsum ('bld,d->bld', u, Dcoeff)
 
         # Regularizers
-        if train and self.regularize:
+        if self.regularize:
             params = self.variables['params']
             kernels = [params['BC'], params['dt']]
             if self.dt_proj:
@@ -247,7 +247,7 @@ class SelectiveSSM(nn.Module):
                 + self.ssm_l2_scale * sum(jnp.sum(p['kernel'] ** 2) for p in kernels))
             self.sow("losses", "ssm_regularizer", reg)
 
-        if train and 'ssm_output_norm' in self.diagnostics:
+        if self.diagnostics and 'ssm_output_norm' in self.diagnostics:
             self.sow("diagnostics", "ssm_output_mean", jnp.mean(y))
             self.sow("diagnostics", "ssm_output_sd", jnp.std(y))
 
