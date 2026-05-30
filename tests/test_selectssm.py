@@ -106,6 +106,22 @@ class TestRCPS:
         y2 = model.apply(params, rc(x))
         assert jnp.allclose(y1, y2, atol=1e-5)
 
+    def test_equivariance_wraps_bidirectional_mamba(self, rng):
+        """RCPSWrapper(BidirectionalMamba) is exactly RC-equivariant end-to-end."""
+        model = RCPSWrapper(
+            module_cls=BidirectionalMamba,
+            module_kwargs={'hidden_features': 8, 'expansion_factor': 2.0},
+        )
+        x = jax.random.normal(rng, (1, 16, 32))  # 2D=32 -> inner D=16
+        params = model.init(rng, x)
+
+        def rc(z):
+            return jnp.flip(z, axis=(-2, -1))
+
+        y1 = rc(model.apply(params, x))
+        y2 = model.apply(params, rc(x))
+        assert jnp.allclose(y1, y2, atol=1e-4)
+
     def test_norm_shape(self, rng):
         model = RCPSNorm()
         x = jax.random.normal(rng, (2, 16, 64))

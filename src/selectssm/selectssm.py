@@ -125,10 +125,6 @@ class SelectiveSSM(nn.Module):
     dt_min: float = 0.001  # 1/(long-range context length)
     dt_max: float = 0.1    # 1/(short-range context length)
 
-    regularize: bool = True  # set to False if doing regularization elsewhere (e.g. in the optimizer)
-    shift_l2_scale: float = 1e-7
-    ssm_l2_scale: float = 1e-6
-
     shift_conv_size: int = 3
 
     activation: str = "silu"
@@ -237,16 +233,6 @@ class SelectiveSSM(nn.Module):
         # Add in the skip connection term
         y = y + jnp.einsum ('bld,d->bld', u, Dcoeff)
 
-        # Regularizers
-        if self.regularize:
-            params = self.variables['params']
-            kernels = [params['BC'], params['dt']]
-            if self.dt_proj:
-                kernels.append(params['dt_proj'])
-            reg = (self.shift_l2_scale * jnp.sum(params['shift_conv']['kernel'] ** 2)
-                + self.ssm_l2_scale * sum(jnp.sum(p['kernel'] ** 2) for p in kernels))
-            self.sow("losses", "ssm_regularizer", reg)
-
         if self.diagnostics and 'ssm_output_norm' in self.diagnostics:
             self.sow("diagnostics", "ssm_output_mean", jnp.mean(y))
             self.sow("diagnostics", "ssm_output_sd", jnp.std(y))
@@ -254,6 +240,19 @@ class SelectiveSSM(nn.Module):
         return y
 
 class BidirectionalMamba(nn.Module):
+    """Non-causal bidirectional Mamba block.
+
+    Combines a forward and a reverse `SelectiveSSM` with a gated output projection.
+    Every output position depends on the full input sequence, so this module is
+    unsuitable as a drop-in for an autoregressive language-model head.
+
+    The ``complement=True, tie_in_proj=True, tie_gate=True, concatenate_fwd_rev=True``
+    configuration does NOT yield exact reverse-complement equivariance — the inner
+    SSM's parameters (``A``, ``BC``, ``dt``, depthwise conv) are not constrained
+    to be channel-flip-symmetric, so any RC symmetry is only approximate/learned.
+    For exact RC equivariance, wrap this module (or any other) in `RCPSWrapper`
+    from :mod:`selectssm.rcps`.
+    """
 
     hidden_features: int   # N
     expansion_factor: float  # E
