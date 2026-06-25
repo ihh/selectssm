@@ -6,3 +6,6 @@ build/
 .eggs/
 *.egg
 .venv/
+
+# Rust
+/rust/target/
