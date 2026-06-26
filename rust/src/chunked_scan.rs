@@ -133,9 +133,16 @@ pub fn ssm_chunked_scan<B: Backend>(
             * dt_c.reshape([cs, bb, d, 1]); // (cs,B,D,N)
 
         // Within-chunk decay matrix L[p,j] = exp(A_cumsum[p] - A_cumsum[j]) * 1[p>=j].
+        // A_cumsum is monotonically non-increasing (it is the inclusive cumsum of a*dt <= 0),
+        // so for the kept entries (p>=j) the exponent is <= 0.  We clamp the exponent to <= 0
+        // before exp() purely as a numerical guard: for the masked-out entries (p<j) the
+        // exponent is positive and large decay magnitudes would overflow exp() to +inf, and
+        // inf * 0 (the mask) = NaN.  clamp_max(0) is a no-op on the kept entries (and on every
+        // fixture), so parity with the JAX reference is preserved; it only tames the entries
+        // that the mask discards anyway.
         let cp = a_cumsum.clone().reshape([cs, 1, bb, d, n]);
         let cj = a_cumsum.reshape([1, cs, bb, d, n]);
-        let lmat = (cp - cj).exp() * mask.clone(); // (cs,cs,B,D,N)
+        let lmat = (cp - cj).clamp_max(0.0).exp() * mask.clone(); // (cs,cs,B,D,N)
         let intra = (lmat * d_b.reshape([1, cs, bb, d, n])).sum_dim(1); // (cs,1,B,D,N)
         let intra = intra.reshape([cs, bb, d, n]);
 
@@ -150,4 +157,33 @@ pub fn ssm_chunked_scan<B: Backend>(
     let y = Tensor::cat(y_chunks, 0); // (Lp, B, D)
     let y = y.swap_dims(0, 1); // (B, Lp, D)
     y.slice([0..bb, 0..l, 0..d])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+    use burn::tensor::{Tensor, TensorData};
+
+    type B = NdArray;
+
+    // Regression guard for the within-chunk decay matrix: with large decay magnitudes the
+    // masked (upper-triangle) exponent A_cumsum[p]-A_cumsum[j] (p<j) is large and positive.
+    // Without clamping the exponent to <= 0 before exp(), it overflowed to +inf and the mask
+    // multiply produced inf*0 = NaN.  This must stay finite.
+    #[test]
+    fn decay_matrix_does_not_overflow() {
+        let dev = Default::default();
+        let (bb, l, d, n) = (1usize, 6usize, 2usize, 4usize);
+        let ones = |shape: [usize; 3]| {
+            let k: usize = shape.iter().product();
+            Tensor::<B, 3>::from_data(TensorData::new(vec![1f32; k], shape), &dev)
+        };
+        // A = -100 (very negative), dt = 5 (large) => A_cumsum reaches ~ -1500 within a chunk.
+        let a = Tensor::<B, 2>::from_data(TensorData::new(vec![-100f32; d * n], [d, n]), &dev);
+        let dt = Tensor::<B, 3>::from_data(TensorData::new(vec![5f32; bb * l * d], [bb, l, d]), &dev);
+        let y = ssm_chunked_scan(ones([bb, l, d]), a, ones([bb, l, n]), ones([bb, l, n]), dt, None, 3);
+        let v: Vec<f32> = y.into_data().to_vec().unwrap();
+        assert!(v.iter().all(|x| x.is_finite()), "decay matrix overflowed to non-finite");
+    }
 }

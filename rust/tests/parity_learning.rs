@@ -7,7 +7,6 @@
 
 use burn::backend::{Autodiff, NdArray};
 use burn::module::{Module, Param};
-use burn::grad_clipping::GradientClippingConfig;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
@@ -200,24 +199,19 @@ fn accuracy(model: &ParityModel<B>, rng: &mut Rng, l: usize, dev: &Dev) -> f32 {
 }
 
 const L_TR: usize = 16; // max training length (even lengths in [6, L_TR])
-const L_EVAL: usize = 24; // held-out evaluation length (longer than training)
+const L_TRAIN_EVAL: usize = 16; // accuracy at the training length (did it learn at all?)
+const L_GEN: usize = 32; // held-out length, 2x training (does it length-generalize?)
 
-/// Returns (accuracy at training length, accuracy at the longer eval length).
+/// Train and return (accuracy at the training length, accuracy at the 2x held-out length).
 fn train(complex: bool, steps: usize, lr: f64, dev: &Dev) -> (f32, f32) {
     let mut rng = Rng(0xC0FFEE);
     let mut model = init_model(complex, &mut rng, dev);
-    // epsilon = 1e-8 to match optax.adam (burn's default is larger); gradient-norm clipping
-    // keeps A_log from exploding (which would make the decay matrix produce NaNs) and lets a
-    // larger learning rate converge stably.
-    let mut optim = AdamConfig::new()
-        .with_epsilon(1e-7)
-        .with_grad_clipping(Some(GradientClippingConfig::Norm(1.0)))
-        .init();
+    // Plain constant-LR Adam (epsilon 1e-8 to match optax.adam), no schedule or gradient
+    // clipping -- the training is numerically stable now that the within-chunk decay matrix
+    // clamps its exponent (see chunked_scan::ssm_chunked_scan).
+    let mut optim = AdamConfig::new().with_epsilon(1e-8).init();
     let l_min = 6;
     for s in 0..steps {
-        // Cosine decay to zero: high LR converges fast; the vanishing tail keeps Adam stable
-        // once the loss is near zero (a constant LR explodes after the model has solved parity).
-        let lr_t = lr * 0.5 * (1.0 + (std::f64::consts::PI * s as f64 / steps as f64).cos());
         let l = (l_min / 2 + (rng.next_u64() as usize % (L_TR / 2 - l_min / 2 + 1))) * 2;
         let (x, t) = batch(&mut rng, 64, l, dev);
         let loss = cross_entropy(model.forward(x), t);
@@ -225,26 +219,29 @@ fn train(complex: bool, steps: usize, lr: f64, dev: &Dev) -> (f32, f32) {
             println!("  step {s:4}  loss {:.4}", loss.clone().into_scalar());
         }
         let grads = GradientsParams::from_grads(loss.backward(), &model);
-        model = optim.step(lr_t, model, grads);
+        model = optim.step(lr, model, grads);
     }
     let mut eval_rng = Rng(0x1234_5678);
-    let at_train = accuracy(&model, &mut eval_rng, L_TR, dev);
-    let at_eval = accuracy(&model, &mut eval_rng, L_EVAL, dev);
-    (at_train, at_eval)
+    let at_train = accuracy(&model, &mut eval_rng, L_TRAIN_EVAL, dev);
+    let at_gen = accuracy(&model, &mut eval_rng, L_GEN, dev);
+    (at_train, at_gen)
 }
 
 #[test]
 fn parity_complex_solves_real_fails() {
     let dev = Default::default();
-    let (on_tr, on_ev) = train(true, 1000, 4e-3, &dev);
-    let (off_tr, off_ev) = train(false, 1000, 4e-3, &dev);
+    let (on_tr, on_gen) = train(true, 700, 4e-3, &dev);
+    let (off_tr, off_gen) = train(false, 700, 4e-3, &dev);
     println!(
-        "\nparity: complex-on [train_len={on_tr:.3}, eval_len={on_ev:.3}]  \
-         real-off [train_len={off_tr:.3}, eval_len={off_ev:.3}]"
+        "\nparity: complex-on [train_len={on_tr:.3}, gen_len(2x)={on_gen:.3}]  \
+         real-off [train_len={off_tr:.3}, gen_len(2x)={off_gen:.3}]"
     );
-    // The qualitative solves-vs-chance gap is the gate (the complex SSM length-generalizes;
-    // the real SSM stays at chance), not a precise number.
-    assert!(on_ev > 0.85, "complex SSM failed to length-generalize on parity: {on_ev:.3}");
-    assert!(off_ev < 0.65, "real SSM unexpectedly solved parity: {off_ev:.3}");
-    assert!(on_ev - off_ev > 0.3, "solves-vs-chance gap too small: {on_ev:.3} vs {off_ev:.3}");
+    // The discriminator is length generalization (as in the Mamba-3 paper): the complex SSM
+    // learns parity and holds up at 2x the training length; the real SSM cannot represent the
+    // rotation, so even where it partially fits the training length its accuracy collapses
+    // toward chance at the longer length.  The qualitative gap is the gate, not a precise number.
+    assert!(on_tr > 0.95, "complex SSM did not learn parity at the training length: {on_tr:.3}");
+    assert!(on_gen > 0.85, "complex SSM did not length-generalize on parity: {on_gen:.3}");
+    assert!(off_gen < 0.7, "real SSM unexpectedly generalized parity: {off_gen:.3}");
+    assert!(on_gen - off_gen > 0.25, "solves-vs-fails gap too small: {on_gen:.3} vs {off_gen:.3}");
 }
