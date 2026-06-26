@@ -9,3 +9,4 @@ build/
 
 # Rust
 /rust/target/
+.pytest_cache/

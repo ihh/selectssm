@@ -21,8 +21,6 @@
         "n_channel_groups": 1,
         "dt_rank": 2,
         "dt_proj": true,
-        "dt_min": 0.001,
-        "dt_max": 0.1,
         "shift_conv_size": 3,
         "activation": "silu"
       },
@@ -82,8 +80,6 @@
         "n_channel_groups": 1,
         "dt_rank": 2,
         "dt_proj": true,
-        "dt_min": 0.001,
-        "dt_max": 0.1,
         "shift_conv_size": 3,
         "activation": "silu"
       },
@@ -150,8 +146,6 @@
         "n_channel_groups": 1,
         "dt_rank": 2,
         "dt_proj": true,
-        "dt_min": 0.001,
-        "dt_max": 0.1,
         "shift_conv_size": 3,
         "activation": "silu"
       },
@@ -211,8 +205,6 @@
         "n_channel_groups": 1,
         "dt_rank": 2,
         "dt_proj": true,
-        "dt_min": 0.001,
-        "dt_max": 0.1,
         "shift_conv_size": 3,
         "activation": "silu"
       },
@@ -279,8 +271,6 @@
         "n_channel_groups": 1,
         "dt_rank": 2,
         "dt_proj": true,
-        "dt_min": 0.001,
-        "dt_max": 0.1,
         "shift_conv_size": 3,
         "activation": "silu"
       },
@@ -349,21 +339,11 @@
         "activation": "silu",
         "norm_type": "rms",
         "mlp_layer": false,
-        "ssm": {
-          "hidden_features": 8,
-          "reverse": false,
-          "complement": false,
-          "use_complex_ssm": false,
-          "chunk_size": 4,
-          "n_channel_groups": 1,
-          "dt_rank": 2,
-          "dt_proj": true,
-          "dt_min": 0.001,
-          "dt_max": 0.1,
-          "shift_conv_size": 3,
-          "activation": "silu"
-        },
-        "use_complex_ssm": false
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
       },
       "param_shapes": {
         "RMSNorm_0/scale": [
@@ -473,21 +453,11 @@
         "activation": "silu",
         "norm_type": "rms",
         "mlp_layer": false,
-        "ssm": {
-          "hidden_features": 8,
-          "reverse": false,
-          "complement": false,
-          "use_complex_ssm": false,
-          "chunk_size": 4,
-          "n_channel_groups": 1,
-          "dt_rank": 2,
-          "dt_proj": true,
-          "dt_min": 0.001,
-          "dt_max": 0.1,
-          "shift_conv_size": 3,
-          "activation": "silu"
-        },
-        "use_complex_ssm": true
+        "use_complex_ssm": true,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
       },
       "param_shapes": {
         "RMSNorm_0/scale": [
@@ -611,21 +581,11 @@
         "activation": "silu",
         "norm_type": "rms",
         "mlp_layer": false,
-        "ssm": {
-          "hidden_features": 8,
-          "reverse": false,
-          "complement": false,
-          "use_complex_ssm": false,
-          "chunk_size": 4,
-          "n_channel_groups": 1,
-          "dt_rank": 2,
-          "dt_proj": true,
-          "dt_min": 0.001,
-          "dt_max": 0.1,
-          "shift_conv_size": 3,
-          "activation": "silu"
-        },
         "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3,
         "rcps": true
       },
       "param_shapes": {
@@ -736,21 +696,11 @@
         "activation": "silu",
         "norm_type": "rms",
         "mlp_layer": false,
-        "ssm": {
-          "hidden_features": 8,
-          "reverse": false,
-          "complement": false,
-          "use_complex_ssm": false,
-          "chunk_size": 4,
-          "n_channel_groups": 1,
-          "dt_rank": 2,
-          "dt_proj": true,
-          "dt_min": 0.001,
-          "dt_max": 0.1,
-          "shift_conv_size": 3,
-          "activation": "silu"
-        },
         "use_complex_ssm": true,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3,
         "rcps": true
       },
       "param_shapes": {

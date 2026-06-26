@@ -1,0 +1,21 @@
+[package]
+name = "selectssm"
+version = "0.1.0"
+edition = "2021"
+description = "Selective SSM (Mamba) with the Mamba-3 complex-SSM RoPE trick, ported to Rust/burn"
+
+[dependencies]
+burn = { version = "0.21", default-features = false, features = ["std", "autodiff", "ndarray"] }
+safetensors = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = []
+# Enable the WebGPU backend (also bumps recursion for its type nesting; see lib.rs).
+wgpu = ["burn/wgpu"]
+# The RCPS reverse-complement parameter-sharing wrapper is severable.
+rcps = []
+
+[profile.dev]
+opt-level = 2

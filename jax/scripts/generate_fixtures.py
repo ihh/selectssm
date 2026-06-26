@@ -84,17 +84,17 @@ def make_case(name, kind, model, x, seed, config):
 def selective_config(**over):
     cfg = dict(hidden_features=8, reverse=False, complement=False, use_complex_ssm=False,
                chunk_size=4, n_channel_groups=1, dt_rank=2, dt_proj=True,
-               dt_min=0.001, dt_max=0.1, shift_conv_size=3, activation="silu")
+               shift_conv_size=3, activation="silu")
     cfg.update(over)
     return cfg
 
 
 def bidir_config(**over):
+    # Flat config carrying everything the Rust forward needs (inner-SSM fields included).
     cfg = dict(hidden_features=8, expansion_factor=2.0, dt_rank=2, complement=False,
                tie_in_proj=False, tie_gate=False, concatenate_fwd_rev=True,
-               activation="silu", norm_type="rms", mlp_layer=False,
-               ssm=selective_config(hidden_features=8, dt_rank=2))
-    # the inner SSM inherits expansion-resolved width; record the salient flags only
+               activation="silu", norm_type="rms", mlp_layer=False, use_complex_ssm=False,
+               chunk_size=4, n_channel_groups=1, dt_proj=True, shift_conv_size=3)
     cfg.update(over)
     return cfg
 
