@@ -10,6 +10,8 @@
 
 // The wgpu backend nests backend types deeply; bump the recursion limit for it.
 #![recursion_limit = "256"]
+// This crate contains no unsafe code (the burn/wgpu dependencies do, internally).
+#![forbid(unsafe_code)]
 
 pub mod config;
 pub mod loader;
