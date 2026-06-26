@@ -29,12 +29,44 @@ def largest_factor_up_to(b,n):
         k -= 1
     return k
 
+# Apply a data-dependent rotary embedding to a state-space projection.
+#
+# This is the "RoPE trick" of Mamba-3 (arXiv:2603.15569, Prop. 3): a complex
+# diagonal SSM is equivalent to a real SSM whose B and C projections are rotated
+# by the cumulative transition phase.  Each projection v (of state width N) is
+# split in half --- the first N/2 entries are the real parts, the last N/2 the
+# imaginary parts --- and every (real, imag) pair is rotated by R(-Phi):
+#
+#     R(-Phi) = [[ cos Phi,  sin Phi],
+#                [-sin Phi,  cos Phi]]
+#
+# Both B and C are rotated by the same cumulative angle Phi_t = sum_{s<=t} theta_s;
+# the y = C^T h contraction then realises the relative rotation R(Phi_s - Phi_t)
+# between input position s and output position t, exactly as RoPE does for the
+# query/key dot product (Su et al. 2023), but with data-dependent angles.
+#
+# v: (..., N);  Phi: (..., N/2).  Returns the rotated projection, same shape as v.
+def _apply_rotary (v, Phi):
+    h = v.shape[-1] // 2
+    v_re = v[..., :h]
+    v_im = v[..., h:]
+    cos = jnp.cos (Phi)
+    sin = jnp.sin (Phi)
+    return jnp.concatenate ([v_re * cos + v_im * sin,
+                             -v_re * sin + v_im * cos], axis=-1)
+
 # x: (B, L, D)
 # Acoeff: (D, N)
 # Bcoeff: (B, L, N)
 # Ccoeff: (B, L, N)
 # dt: (B, L, D) or (B, L, 1);  can assume (B, L, D) and rely on broadcasting
-def ssm_chunked_scan (x, Acoeff, Bcoeff, Ccoeff, dt, chunk_size: int = None, n_channel_groups: int = 1):
+# theta: (B, L, N/2) or None.  Data-dependent per-step rotation angle for the
+#   complex-SSM "RoPE trick".  When None, the scan is the plain real SSM and the
+#   result is bitwise-identical to the original implementation.  When provided,
+#   the cumulative angle Phi_t = sum_{s<=t} theta_s is formed as a prefix sum that
+#   is carried across chunks (so it composes with the chunked-scan machinery), and
+#   B and C are rotated by R(-Phi) before the real recurrence.
+def ssm_chunked_scan (x, Acoeff, Bcoeff, Ccoeff, dt, theta=None, chunk_size: int = None, n_channel_groups: int = 1):
     B = x.shape[-3]
     L = x.shape[-2]
     D = x.shape[-1]
@@ -50,9 +82,23 @@ def ssm_chunked_scan (x, Acoeff, Bcoeff, Ccoeff, dt, chunk_size: int = None, n_c
     if chunk_size is None:
         chunk_size = largest_factor_up_to(int(math.sqrt(K*L)),L)
 
-    if L % chunk_size != 0:
-        raise ValueError(f"chunk_size={chunk_size} must divide L={L}")
-    n_chunks = L // chunk_size
+    # If the chunk size does not divide L, pad the sequence up to the next multiple
+    # with zeros and discard the padded outputs.  Padding at the end is safe because
+    # the scan is causal: padded steps have dt=0 (hence dA=exp(0)=1, dB=0, theta=0),
+    # so they neither decay the state nor inject input nor advance the rotation angle,
+    # and they come strictly after every real position.  When chunk_size divides L
+    # (the default, and every previously-supported case) no padding is applied and
+    # the computation is bitwise-identical to before.
+    pad = (-L) % chunk_size
+    if pad:
+        x = jnp.pad (x, ((0, 0), (0, pad), (0, 0)))
+        Bcoeff = jnp.pad (Bcoeff, ((0, 0), (0, pad), (0, 0)))
+        Ccoeff = jnp.pad (Ccoeff, ((0, 0), (0, pad), (0, 0)))
+        dt = jnp.pad (dt, ((0, 0), (0, pad), (0, 0)))
+        if theta is not None:
+            theta = jnp.pad (theta, ((0, 0), (0, pad), (0, 0)))
+    Lp = L + pad
+    n_chunks = Lp // chunk_size
 
     # Transpose length & batch dimensions to make the scan over length, and split into chunks
     # This is a bit inefficient, but taking dynamic slices appears to be worse
@@ -93,20 +139,40 @@ def ssm_chunked_scan (x, Acoeff, Bcoeff, Ccoeff, dt, chunk_size: int = None, n_c
     # A wrapper that splits the dimensions into K blocks and does the inner associative scan for each block, re-using B and C (which don't change across dimensions)
     @jax.remat
     def scan_chunk_mapped (carry, chunk):
-        g_init, h_init = carry  # (K,1,B,D/K,N) (K,1,B,D/K,N)
+        g_init, h_init, angle_acc = carry  # (K,1,B,D/K,N) (K,1,B,D/K,N) (B,N/2)
 
-        x_chunk, B_chunk, C_chunk, dt_chunk = chunk   # (K,B,L,D/K), (B,L,N), (B,L,N), (K,B,L,D/K)
+        x_chunk, B_chunk, C_chunk, dt_chunk, theta_chunk = chunk   # (K,L,B,D/K), (L,B,N), (L,B,N), (K,L,B,D/K), (L,B,N/2)|None
+        # Complex-SSM "RoPE trick": form the cumulative rotation angle as a prefix
+        # sum carried across chunks, and rotate B and C (shared across the K channel
+        # groups) by R(-Phi) before the real recurrence.
+        if theta_chunk is not None:
+            Phi = angle_acc[None, ...] + jnp.cumsum (theta_chunk, axis=0)  # (L,B,N/2)  inclusive prefix sum
+            new_angle_acc = angle_acc + jnp.sum (theta_chunk, axis=0)      # (B,N/2)    angle carried to next chunk
+            B_chunk = _apply_rotary (B_chunk, Phi)
+            C_chunk = _apply_rotary (C_chunk, Phi)
+        else:
+            new_angle_acc = angle_acc
+
         @jax.remat
         def scan_chunk_wrapper (block):
             dA_init_block, dB_init_block, x_chunk_block, A_block, dt_chunk_block = block
             return scan_chunk ((dA_init_block, dB_init_block), (x_chunk_block, A_block, B_chunk, C_chunk, dt_chunk_block))
-        return jax.lax.map (scan_chunk_wrapper, (g_init, h_init, x_chunk, A_blocks, dt_chunk))
+        (g_final, h_final), y_chunk = jax.lax.map (scan_chunk_wrapper, (g_init, h_init, x_chunk, A_blocks, dt_chunk))
+        return (g_final, h_final, new_angle_acc), y_chunk
 
 
     # Perform the scan over chunks recurrently (with rematerialization as noted above), with each chunk being an associative scan
-    (_A_final, _h_final), y_chunks = jax.lax.scan (scan_chunk_mapped, (jnp.ones((K,1,B,D//K,N)), jnp.zeros((K,1,B,D//K,N))), (x_chunks, B_chunks, C_chunks, dt_chunks))  # (K, n_chunks, B, D//K)
+    theta_chunks = einops.rearrange (theta, 'b (c l) h -> c l b h', c=n_chunks) if theta is not None else None
+    angle_init = jnp.zeros ((B, N // 2)) if theta is not None else jnp.zeros ((B, 0))
+    (_A_final, _h_final, _angle_final), y_chunks = jax.lax.scan (
+        scan_chunk_mapped,
+        (jnp.ones((K,1,B,D//K,N)), jnp.zeros((K,1,B,D//K,N)), angle_init),
+        (x_chunks, B_chunks, C_chunks, dt_chunks, theta_chunks))  # (K, n_chunks, B, D//K)
 
-    return einops.rearrange (y_chunks, 'c k l b d -> b (c l) (k d)')  # (B, L, D)
+    y = einops.rearrange (y_chunks, 'c k l b d -> b (c l) (k d)')  # (B, Lp, D)
+    if pad:
+        y = y[:, :L, :]
+    return y  # (B, L, D)
 
 
 class SelectiveSSM(nn.Module):
@@ -118,6 +184,17 @@ class SelectiveSSM(nn.Module):
     hidden_features: int = 16  # N
     chunk_size: int = None
     n_channel_groups: int = None
+
+    # Complex-SSM "RoPE trick" (Mamba-3, arXiv:2603.15569, Prop. 3).  When True,
+    # a data-dependent rotation angle theta is projected from the input and the
+    # complex diagonal transition is realised by rotating the B and C projections
+    # by the cumulative angle (see ssm_chunked_scan / _apply_rotary).  This adds
+    # the rotational dynamics needed for state-tracking tasks (e.g. parity) that a
+    # purely real SSM cannot represent.  Off by default; when False the model is
+    # bitwise-identical to the plain real SSM.  Supported only with the chunked
+    # scan (the default); combining it with recursive_scan or custom_vjp_scan
+    # raises an error.  Requires hidden_features (N) to be even.
+    use_complex_ssm: bool = False
 
     dt_rank: Union[int, str] = 'auto'  # R
     dt_proj: bool = True   # whether to use a linear projection (vs broadcast) to map dt_rank to D
@@ -183,7 +260,16 @@ class SelectiveSSM(nn.Module):
             raise Exception(f"Unknown activation: {self.activation}")
 
         # Initialize A nonrandomly with evenly spaced eigenvalues; keep parameterization in log space to guarantee A<0
-        Acoeff = -jnp.exp (self.param ('A_log', lambda rng: jnp.log (jnp.repeat (jnp.arange(start=1,stop=N+1,dtype=jnp.float32)[None,:], D, axis=0))))  # (D, N)
+        if self.use_complex_ssm:
+            # Complex SSM: each state pair (i, i+N/2) shares its decay magnitude --- the
+            # real part of a single complex eigenvalue --- so that exp(A*dt) restricted to
+            # each 2x2 rotation block is a scaled identity that commutes with the rotation.
+            # This is what makes the RoPE-trick factorization (Prop. 3) exact.  A_log is
+            # therefore parameterized at half width (D, N/2) and tiled to (D, N).
+            A_log = self.param ('A_log', lambda rng: jnp.log (jnp.repeat (jnp.arange(start=1,stop=N//2+1,dtype=jnp.float32)[None,:], D, axis=0)))  # (D, N/2)
+            Acoeff = -jnp.exp (jnp.concatenate ([A_log, A_log], axis=-1))  # (D, N)
+        else:
+            Acoeff = -jnp.exp (self.param ('A_log', lambda rng: jnp.log (jnp.repeat (jnp.arange(start=1,stop=N+1,dtype=jnp.float32)[None,:], D, axis=0))))  # (D, N)
         Bcoeff, Ccoeff = jnp.split (nn.Dense (features=2*N, name='BC', use_bias=True, kernel_init=nn.initializers.lecun_normal()) (u), 2, axis=-1)  # (B, L, N) *2
         Dcoeff = self.param ('D', lambda rng: jnp.ones((D,)))  # (D,)
 
@@ -215,13 +301,32 @@ class SelectiveSSM(nn.Module):
             self.sow("diagnostics", "B_sd", jnp.std(Bcoeff))
             self.sow("diagnostics", "C_sd", jnp.std(Ccoeff))
 
+        # Complex-SSM "RoPE trick": project a data-dependent rotation angle theta,
+        # one per (real, imag) state pair, analogous to how dt is produced.  No
+        # activation is applied --- the angle is signed, since negative effective
+        # eigenvalues (rotations through pi) are exactly what unlocks state tracking.
+        theta = None
+        if self.use_complex_ssm:
+            if N % 2 != 0:
+                raise ValueError(f"use_complex_ssm requires an even hidden_features (N); got N={N}")
+            theta = nn.Dense (features=N // 2, use_bias=True, name='theta',
+                              kernel_init=nn.initializers.lecun_normal(),
+                              bias_init=nn.initializers.zeros) (u)  # (B, L, N/2)
+            if self.diagnostics and 'ssm_coeffs' in self.diagnostics:
+                self.sow("diagnostics", "theta_mean", jnp.mean(theta))
+                self.sow("diagnostics", "theta_sd", jnp.std(theta))
+
         # Perform SSM scan
         if self.custom_vjp_scan:
+            if self.use_complex_ssm:
+                raise ValueError("use_complex_ssm is only supported with the chunked scan; set custom_vjp_scan=False")
             y = ssm_scan (u, Acoeff, Bcoeff, Ccoeff, dt, min_recursion_length=self.min_recursion_length, recursive_split=self.recursive_split)  # (B, L, D)
         elif self.recursive_scan:
+            if self.use_complex_ssm:
+                raise ValueError("use_complex_ssm is only supported with the chunked scan; set recursive_scan=False")
             y = ssm_recursive_scan (u, Acoeff, Bcoeff, Ccoeff, dt, min_recursion_length=self.min_recursion_length, recursive_split=self.recursive_split)  # (B, L, D)
         else:
-            y = ssm_chunked_scan (u, Acoeff, Bcoeff, Ccoeff, dt, chunk_size=self.chunk_size, n_channel_groups=self.n_channel_groups)  # (B, L, D)
+            y = ssm_chunked_scan (u, Acoeff, Bcoeff, Ccoeff, dt, theta=theta, chunk_size=self.chunk_size, n_channel_groups=self.n_channel_groups)  # (B, L, D)
 
         if self.reverse:
             y = jnp.flip (y, axis=(-2,-1) if self.complement else -2)
