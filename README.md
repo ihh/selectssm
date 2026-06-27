@@ -8,9 +8,9 @@ The layer provides:
 
 - **`SelectiveSSM`** — a causal selective SSM (Mamba), with an anti-causal `reverse=True` mode.
 - **`BidirectionalMamba`** — a non-causal forward+reverse block with gated output projection.
-- **RCPS** reverse-complement parameter-sharing wrappers for exact RC equivariance.
-- An optional **complex-SSM "RoPE trick"** (`use_complex_ssm`) — the Mamba-3 data-dependent
-  rotary mechanism (arXiv:2603.15569, Prop. 2/3) that unlocks state-tracking tasks such as
+- **RCPS** reverse-complement parameter-sharing wrappers for exact RC equivariance in DNA applications. (YAGNI, though. Just augment your training data.)
+- An optional **complex-SSM "RoPE trick"** (`use_complex_ssm`) — the [Mamba-3](https://arxiv.org/abs/2603.15569) data-dependent
+  rotary positional-encoding mechanism that unlocks state-tracking tasks such as
   parity. It is **not** standard fixed-frequency positional RoPE; the rotation angles are
   produced data-dependently from the input.
 
