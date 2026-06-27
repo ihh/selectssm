@@ -13,9 +13,9 @@ parity fixtures):
   intermediates in a hand-derived backward (low training memory) vs. the **reference** scan
   that retains them on the autodiff tape. See [Rematerialization](#rematerialization-use_remat).
 - **`scan_algo`** — the within-chunk algorithm: `matrix` (the `cs×cs` decay matrix), `hillis`
-  (Hillis–Steele parallel prefix scan, the **default**), or `cubecl` (a custom GPU kernel,
-  `--features cubecl`). See [`PERFORMANCE.md`](PERFORMANCE.md) — `hillis` is ~3–4× faster than
-  `matrix`, and `cubecl` brings the forward to ~1.5× of JAX/XLA.
+  (Hillis–Steele parallel prefix scan, the **default**), or `cubecl` (custom parallel-scan GPU
+  kernels, `--features cubecl`). See [`PERFORMANCE.md`](PERFORMANCE.md) — `hillis` is ~3–4×
+  faster than `matrix`, and `cubecl` brings the full training step to ~1.25× of JAX/XLA.
 
 ## Modules
 

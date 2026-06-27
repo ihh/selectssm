@@ -33,7 +33,7 @@ use burn_autodiff::ops::{Backward, Ops, OpsKind};
 
 use crate::chunked_scan::{
     apply_rotary, cumsum0_3, cumsum0_4, pad_l, rev_assoc_scan0, scan_chunk_body, ssm_chunked_scan,
-    tril_ones, within_chunk_hs,
+    within_chunk_hs,
 };
 use crate::config::ScanAlgo;
 
@@ -190,8 +190,7 @@ fn scan_collect<B: ScanBackend>(
     let n = a.dims()[1];
     let h = n / 2;
 
-    let tril = tril_ones::<B>(cs, &device);
-    let mask = tril.clone().reshape([cs, cs, 1, 1, 1]);
+    let (tril, mask) = crate::chunked_scan::scan_consts::<B>(cs, &device, algo, theta_lm.is_some());
     let a4 = a.clone().reshape([1, 1, d, n]);
 
     let mut hstate = Tensor::<B, 4>::zeros([1, bb, d, n], &device);
@@ -390,8 +389,8 @@ impl<B: ScanBackend> Backward<B, 6> for ChunkedScanRemat {
         let grad_y = Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(grad_out));
         let grad_y_lm = pad_l(grad_y, st.pad).swap_dims(0, 1); // (Lp, B, D)
 
-        let tril = tril_ones::<B>(cs, &device);
-        let mask = tril.clone().reshape([cs, cs, 1, 1, 1]);
+        let (tril, mask) =
+            crate::chunked_scan::scan_consts::<B>(cs, &device, st.algo, st.use_complex);
         let a4 = st.a.clone().reshape([1, 1, d, n]);
 
         // Per-chunk input-gradient slots (filled in reverse, concatenated in order).
@@ -477,18 +476,19 @@ impl<B: ScanBackend, C: CheckpointStrategy> ScanBackend for Autodiff<B, C> {
         let [bb, l, d] = u.dims();
         let n = a.dims()[1];
         let h = n / 2;
+        let use_complex = theta.is_some();
         // The chunk size is a pure performance knob — the scan result is identical for any
-        // value.  The cubecl kernel is one-thread-per-channel sequential, so it wants a
-        // moderate block (long enough to amortise launches, short enough to keep the serial
-        // chain cheap); ~256 is the measured sweet spot and is decoupled here from the model's
-        // `chunk_size` (which is tuned for the matrix/Hillis forms).
+        // value.  The cubecl scan kernel is an internally-parallel blocked scan, so it stays
+        // fast at full length: in real mode we run the whole sequence as ONE chunk, which also
+        // collapses the backward's per-chunk gradient reductions into a single set.  In complex
+        // mode the per-chunk rotary cumsum is O(cs²), so we keep a moderate chunk there.
         let cs = match opts.algo {
+            ScanAlgo::Cubecl if !use_complex => l.max(1),
             ScanAlgo::Cubecl => CUBECL_BLOCK.min(l.next_power_of_two().max(1)),
             _ => opts.chunk_size,
         };
         let pad = (cs - l % cs) % cs;
         let n_chunks = (l + pad) / cs;
-        let use_complex = theta.is_some();
 
         // Synthesize a constant theta when real so the op always has 6 parents; a non-grad
         // tensor contributes a `None` parent slot (its gradient is never registered).

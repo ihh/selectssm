@@ -119,6 +119,27 @@ pub(crate) fn rev_assoc_scan0<B: Backend>(al: Tensor<B, 4>, src: Tensor<B, 4>) -
     g.flip([0])
 }
 
+/// Build the chunk-shaped constants `(tril, mask)` for the scan, allocating the `cs×cs` matrix
+/// only when an algorithm actually needs it.  The `Matrix` algorithm uses both; the rotary
+/// (complex mode) uses `tril` for the cumulative angle; the `Hillis`/`Cubecl` real-mode paths
+/// use neither, so we return 1-element placeholders (important when `cs` is the whole sequence,
+/// where a real `cs×cs` tril would be huge and built on the CPU).
+pub(crate) fn scan_consts<B: Backend>(
+    cs: usize,
+    device: &B::Device,
+    algo: ScanAlgo,
+    complex: bool,
+) -> (Tensor<B, 2>, Tensor<B, 5>) {
+    let need_tril = algo == ScanAlgo::Matrix || complex;
+    let tril = tril_ones::<B>(if need_tril { cs } else { 1 }, device);
+    let mask = if algo == ScanAlgo::Matrix {
+        tril.clone().reshape([cs, cs, 1, 1, 1])
+    } else {
+        Tensor::zeros([1, 1, 1, 1, 1], device)
+    };
+    (tril, mask)
+}
+
 /// One chunk of the selective scan, written so it can be reused by both the reference
 /// (non-remat) loop and the rematerializing autodiff op (which re-runs it in the backward
 /// pass).  All inputs are length-major and already padded/sliced for this chunk.
