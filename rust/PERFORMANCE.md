@@ -56,10 +56,12 @@ tolerance), trading work, memory, and parallelism:
 |---|---|---|
 | Matrix | 177 ms | 548 ms |
 | Hillis | 46 ms | 167 ms |
-| **Cubecl** | **8.8 ms** | **91 ms** |
+| **Cubecl** | **8.8 ms** | **53 ms** |
 
-Hillis is ~3–4× faster than Matrix; Cubecl is a further ~5× on the forward (its backward still
-uses the Hillis adjoint, so the fwd+bwd gain is ~1.8×).
+Hillis is ~3–4× faster than Matrix; Cubecl is a further ~5× on the forward. Both the forward
+state recurrence and the backward adjoint scan are GPU kernels (`chunk_scan_kernel` /
+`chunk_rev_scan_kernel`); the remaining backward cost is the elementwise gradient reductions,
+which are still burn ops.
 
 ### Chunk-size sensitivity (`L=4096`, real, remat — forward ms)
 
@@ -80,11 +82,12 @@ stays as configured by the fixtures; `cs≈128` is a good choice for the scan-he
 | | Rust Matrix | Rust Hillis | Rust Cubecl | JAX chunked (XLA) |
 |---|---|---|---|---|
 | forward (L=8192) | 177 ms | 46 ms | **8.8 ms** | 6.0 ms |
-| fwd+bwd (L=8192) | 548 ms | 167 ms | 91 ms | 29 ms |
+| fwd+bwd (L=8192) | 548 ms | 167 ms | **53 ms** | 29 ms |
 
-The progression closes most of the original ~30× gap: the algorithmic change (Hillis) and then
-the GPU kernel (Cubecl) bring the **forward to ~1.5× of XLA**. The remaining fwd+bwd gap is
-mostly the backward, which still runs the analytic VJP through burn ops rather than a kernel.
+The progression closes most of the original ~30× gap. The algorithmic change (Hillis) and then
+the GPU kernels (Cubecl, forward **and** backward) bring the **forward to ~1.5× of XLA** and
+**forward+backward to ~1.8×**. The residual gap is the elementwise gradient reductions in the
+backward (still burn ops) plus the small per-chunk forward ops that XLA fuses.
 
 JAX's own three scan strategies were measured too: **chunked is both its fastest and its
 default** (~10× faster forward and ~25–30× faster fwd+bwd than `recursive_scan` /

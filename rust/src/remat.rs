@@ -77,6 +77,13 @@ pub trait ScanBackend: Backend {
         let (a_cum, b_scan) = crate::chunked_scan::assoc_scan0(da, db);
         a_cum * hstate + b_scan
     }
+
+    /// Reverse adjoint scan `bar_h[t] = Σ_{p≥t} (∏_{k=t+1..p} da[k]) src[p]` for the backward
+    /// pass of [`ScanAlgo::Cubecl`].  Default is the portable reverse Hillis–Steele scan; the
+    /// wgpu backend overrides it with the reverse GPU kernel.
+    fn within_chunk_rev_scan_cubecl(da: Tensor<Self, 4>, src: Tensor<Self, 4>) -> Tensor<Self, 4> {
+        crate::chunked_scan::rev_assoc_scan0(da, src)
+    }
 }
 
 /// Reference implementation for the concrete (non-autodiff) backends used by this crate.
@@ -123,6 +130,11 @@ impl ScanBackend for burn::backend::Wgpu {
         hstate: Tensor<Self, 4>,
     ) -> Tensor<Self, 4> {
         selectssm_cubecl::within_chunk_scan(da, db, hstate)
+    }
+
+    #[cfg(all(feature = "cubecl", not(feature = "fusion")))]
+    fn within_chunk_rev_scan_cubecl(da: Tensor<Self, 4>, src: Tensor<Self, 4>) -> Tensor<Self, 4> {
+        selectssm_cubecl::within_chunk_rev_scan(da, src)
     }
 }
 
@@ -295,9 +307,10 @@ fn chunk_vjp<B: ScanBackend>(
             let lmat = (cp - cj).clamp_max(0.0).exp() * mask.clone(); // (cs,cs,B,D,N), L[p,j]
             (lmat * src.reshape([cs, 1, bb, d, n])).sum_dim(0).reshape([cs, bb, d, n])
         }
-        // Hillis and Cubecl share the reverse Hillis–Steele adjoint scan (the kernel only
-        // accelerates the forward state recurrence).
-        ScanAlgo::Hillis | ScanAlgo::Cubecl => rev_assoc_scan0(al.clone(), src),
+        ScanAlgo::Hillis => rev_assoc_scan0(al.clone(), src),
+        // Cubecl uses the reverse GPU kernel for the adjoint scan (falls back to the reverse
+        // Hillis scan off-GPU / without the feature).
+        ScanAlgo::Cubecl => B::within_chunk_rev_scan_cubecl(al.clone(), src),
     };
 
     let bar_db = bar_h.clone(); // grad wrt d_b (h[t] = ... + d_b[t], coefficient 1)

@@ -123,9 +123,10 @@ optimizations (see [`rust/PERFORMANCE.md`](rust/PERFORMANCE.md)) close most of t
 - **`hillis` (now the default)** — a Hillis–Steele parallel prefix scan (`O(L·log cs)`, the
   portable analogue of `jax.lax.associative_scan`) replaces the `O(L·cs)` matrix form: **~3–4×
   faster**, same memory, all backends.
-- **`cubecl` (opt-in GPU kernel)** — a custom prefix-scan kernel brings the **forward to ~1.5×
-  of JAX/XLA** (from ~30×). The remaining forward+backward gap (~3×) is the backward, which
-  still runs through burn ops rather than a kernel.
+- **`cubecl` (opt-in GPU kernels)** — custom prefix-scan kernels for the forward state
+  recurrence *and* the backward adjoint scan bring the **forward to ~1.5× of JAX/XLA** and
+  **forward+backward to ~1.8×** (from ~30×). The residual gap is the elementwise gradient
+  reductions (still burn ops) and small per-chunk ops that XLA fuses.
 
 burn's kernel-fusion backend (`--features fusion`, the XLA-fusion analogue) made **no**
 difference here — the cost is large matmul/reduction ops, not the elementwise chains fusion
