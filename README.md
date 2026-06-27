@@ -90,48 +90,49 @@ selective SSM versus attention. The benchmark harness sweeps `L` at fixed
 python3 scripts/benchmark_scaling.py        # writes fixtures/benchmark_scaling.csv
 ```
 
-Numbers below are on one **NVIDIA RTX A6000**, real mode, forward+backward (training step):
+Forward+backward (training step) on one **NVIDIA RTX A6000**, real mode:
 
-| L | Rust remat | Rust reference | JAX chunked | JAX recursive | JAX custom_vjp |
-|---|---|---|---|---|---|
-| **time (ms)** | | | | | |
-| 1024 | 56 | 66 | 4.3 | 99 | 84 |
-| 4096 | 211 | 261 | 16 | 448 | 361 |
-| 8192 | 420 | 533 | 29 | 951 | 749 |
-| **peak VRAM (MiB)** | | | | | |
-| 1024 | 679 | 4 839 | 338 | 378 | 338 |
-| 4096 | 935 | 17 639 | 396 | 430 | 418 |
-| 8192 | 1 063 | 34 471 | 494 | 562 | 548 |
+| L | Rust `matrix` | Rust `hillis` | Rust `cubecl` | JAX chunked (XLA) |
+|---|---|---|---|---|
+| 1024 | 72 ms | 21 ms | 5.5 ms | 4.3 ms |
+| 4096 | 276 ms | 82 ms | 19 ms | 16 ms |
+| 8192 | 548 ms | 172 ms | 37 ms | 30 ms |
+
+`matrix` / `hillis` / `cubecl` are the three within-chunk scan algorithms (the `scan_algo`
+config field): `hillis` is the default; `cubecl` needs `--features cubecl`. JAX's three scan
+strategies (`recursive_scan` / `custom_vjp_scan` are ~25–30× slower than the default chunked
+scan) are in [`rust/PERFORMANCE.md`](rust/PERFORMANCE.md).
+
+Peak **training** VRAM — the rematerializing scan (default) vs the reference scan that retains
+the whole autodiff tape:
+
+| L | remat | reference |
+|---|---|---|
+| 1024 | 0.7 GB | 4.8 GB |
+| 4096 | 0.9 GB | 17.6 GB |
+| 8192 | **1.1 GB** | **34.5 GB** |
 
 Takeaways:
 
-- **Time is linear in `L` for every implementation** (doubling `L` roughly doubles the time) —
-  the expected `O(L)` behaviour.
-- **JAX's chunked scan is its most efficient strategy** — and is the default. It is ~10× faster
-  on the forward and ~25–30× faster on forward+backward than the `recursive_scan` and
-  `custom_vjp_scan` strategies, at equal (low) memory. Those two are also the only ones that
-  cannot use the complex-SSM RoPE trick. (See [`jax/README.md`](jax/README.md).)
-- **Rust training memory is dominated by the autodiff tape.** The reference scan keeps every
-  chunk's `cs×cs` decay matrix live until backward, so peak VRAM grows linearly to ~34 GB at
-  `L=8192`. The **rematerializing scan** (default) recomputes them in a hand-derived backward,
-  holding only inputs and small per-chunk carries: peak VRAM stays ~flat (≈1 GB at `L=8192`,
-  a **32× reduction**) and is ~20% faster.
+- **Time is linear in `L` for every implementation** — the expected `O(L)` behaviour, and the
+  whole point of a selective SSM versus attention.
+- **JAX's chunked scan is its most efficient strategy** and is its default — both fastest and
+  lowest-memory of its three (see [`jax/README.md`](jax/README.md)).
+- **Rematerialization (default) cuts training VRAM ~32×** (≈1 GB vs ≈34 GB at `L=8192`, and
+  ~flat in `L`): a custom autodiff op recomputes each chunk's intermediates in a hand-derived
+  backward instead of keeping the `cs×cs` decay matrices on the tape. Also ~20% faster.
+- **The Rust scan got to within ~1.25× of XLA.** `matrix` (the original `O(L·cs)` decay-matrix
+  form) → `hillis` (a Hillis–Steele parallel prefix scan, `O(L·log cs)`, the portable analogue
+  of `jax.lax.associative_scan` — ~3–4× faster, the default, all backends) → `cubecl`
+  (work-efficient parallel-scan GPU kernels for the forward **and** the backward adjoint —
+  ~1.25× of XLA on the full training step). The residual gap is the elementwise/projection ops
+  that XLA fuses and burn runs as separate kernels.
+- **burn's kernel-fusion backend (`--features fusion`) made no difference** here — the cost is
+  large matmul/reduction ops, not the elementwise chains fusion targets; the lever was the scan
+  *algorithm*, not fusion.
 
-The Rust table above uses the original `matrix` within-chunk algorithm. Two further
-optimizations (see [`rust/PERFORMANCE.md`](rust/PERFORMANCE.md)) close most of the gap to XLA:
-
-- **`hillis` (now the default)** — a Hillis–Steele parallel prefix scan (`O(L·log cs)`, the
-  portable analogue of `jax.lax.associative_scan`) replaces the `O(L·cs)` matrix form: **~3–4×
-  faster**, same memory, all backends.
-- **`cubecl` (opt-in GPU kernels)** — work-efficient parallel-scan kernels for the forward
-  state recurrence *and* the backward adjoint scan bring the **full training step to ~1.25× of
-  JAX/XLA** (from ~30×; forward alone ~1.7×, being projection/elementwise-bound). The residual
-  gap is the elementwise ops (projections, `exp`, `dB`, gradient reductions) that XLA fuses and
-  burn runs as separate kernels.
-
-burn's kernel-fusion backend (`--features fusion`, the XLA-fusion analogue) made **no**
-difference here — the cost is large matmul/reduction ops, not the elementwise chains fusion
-targets; the lever was the scan *algorithm*, not fusion.
+See [`rust/PERFORMANCE.md`](rust/PERFORMANCE.md) for the full breakdown (per-algorithm,
+chunk-size sensitivity, and reproduction commands).
 
 ## Acknowledgements
 
