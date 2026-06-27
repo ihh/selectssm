@@ -220,4 +220,10 @@ fn main() {
         "RESULT impl=rust,device={device},mode={mode},scan={scan},algo={algo_str},B={b},L={l},D={d},N={n},chunk={chunk},fwd_ms={fwd_ms:.4},fwdbwd_ms={fwdbwd_ms:.4},host_peak_mib={:.1}",
         peak_rss_mib()
     );
+    // The wgpu/Vulkan backend occasionally faults during process-exit teardown (a rare driver
+    // race, after all work and output — not a compute error).  Flush stdout and hard-exit to
+    // skip that teardown path so this benchmark CLI always returns a clean exit code.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::process::exit(0);
 }
