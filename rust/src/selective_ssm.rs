@@ -6,9 +6,9 @@ use burn::tensor::activation::sigmoid;
 use burn::tensor::backend::Backend;
 use burn::tensor::Tensor;
 
-use crate::chunked_scan::ssm_chunked_scan;
 use crate::config::SelectiveSsmConfig;
 use crate::loader::{SsmWeights, Store, P};
+use crate::remat::{ScanBackend, ScanOpts};
 
 /// Causal depthwise 1-D convolution matching Flax `nn.Conv(feature_group_count=D,
 /// padding=[(k-1, 0)])`: `u[t] = sum_i kernel[i] * x[t-(k-1)+i]` with left zero-padding.
@@ -71,13 +71,16 @@ impl<B: Backend> SelectiveSsm<B> {
     }
 
     /// Forward pass, `(B, L, D) -> (B, L, D)`.
-    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3>
+    where
+        B: ScanBackend,
+    {
         forward_ssm(&self.weights, &self.cfg, x)
     }
 }
 
 /// Free-function forward, so `BidirectionalMamba` can reuse it on its inner SSM weights.
-pub fn forward_ssm<B: Backend>(
+pub fn forward_ssm<B: ScanBackend>(
     w: &SsmWeights<B>,
     cfg: &SelectiveSsmConfig,
     x: Tensor<B, 3>,
@@ -121,7 +124,12 @@ pub fn forward_ssm<B: Backend>(
 
         let theta = w.theta.as_ref().map(|t| t.forward(u.clone())); // (B, L, N/2)
 
-        let y = ssm_chunked_scan(u.clone(), a, b_proj, c_proj, dt, theta, cfg.chunk_size);
+        let opts = ScanOpts {
+            chunk_size: cfg.chunk_size,
+            use_remat: cfg.use_remat,
+            algo: cfg.scan_algo,
+        };
+        let y = B::chunked_scan(opts, u.clone(), a, b_proj, c_proj, dt, theta);
 
         // Flip the scan output back to the original order.
         let y = if cfg.reverse {

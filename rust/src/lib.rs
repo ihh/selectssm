@@ -13,9 +13,15 @@
 // This crate contains no unsafe code (the burn/wgpu dependencies do, internally).
 #![forbid(unsafe_code)]
 
+// The cubecl kernel needs the plain (non-fusion) wgpu backend; `fusion` changes the backend
+// type, so the two features are mutually exclusive.
+#[cfg(all(feature = "cubecl", feature = "fusion"))]
+compile_error!("features `cubecl` and `fusion` are mutually exclusive");
+
 pub mod config;
 pub mod loader;
 pub mod chunked_scan;
+pub mod remat;
 pub mod selective_ssm;
 pub mod bidirectional;
 

@@ -78,3 +78,55 @@ scalar loss) for `{causal, reverse, bidirectional, rcps} × {complex off, on}`, 
 sequence length that is not a multiple of the chunk size. The Rust suite loads these
 `fixtures/*.safetensors` and asserts forward parity (~1e-4 relative) and gradient parity
 (~1e-3 relative) on both the ndarray and wgpu backends.
+
+## Performance & scaling
+
+Both implementations are **linear-time in sequence length** `L` — the whole point of a
+selective SSM versus attention. The benchmark harness sweeps `L` at fixed
+`B=4, D=128, N=8, chunk=64`, running one subprocess per configuration and sampling
+`nvidia-smi` for peak VRAM. Reproduce with:
+
+```bash
+python3 scripts/benchmark_scaling.py        # writes fixtures/benchmark_scaling.csv
+```
+
+Numbers below are on one **NVIDIA RTX A6000**, real mode, forward+backward (training step):
+
+| L | Rust remat | Rust reference | JAX chunked | JAX recursive | JAX custom_vjp |
+|---|---|---|---|---|---|
+| **time (ms)** | | | | | |
+| 1024 | 56 | 66 | 4.3 | 99 | 84 |
+| 4096 | 211 | 261 | 16 | 448 | 361 |
+| 8192 | 420 | 533 | 29 | 951 | 749 |
+| **peak VRAM (MiB)** | | | | | |
+| 1024 | 679 | 4 839 | 338 | 378 | 338 |
+| 4096 | 935 | 17 639 | 396 | 430 | 418 |
+| 8192 | 1 063 | 34 471 | 494 | 562 | 548 |
+
+Takeaways:
+
+- **Time is linear in `L` for every implementation** (doubling `L` roughly doubles the time) —
+  the expected `O(L)` behaviour.
+- **JAX's chunked scan is its most efficient strategy** — and is the default. It is ~10× faster
+  on the forward and ~25–30× faster on forward+backward than the `recursive_scan` and
+  `custom_vjp_scan` strategies, at equal (low) memory. Those two are also the only ones that
+  cannot use the complex-SSM RoPE trick. (See [`jax/README.md`](jax/README.md).)
+- **Rust training memory is dominated by the autodiff tape.** The reference scan keeps every
+  chunk's `cs×cs` decay matrix live until backward, so peak VRAM grows linearly to ~34 GB at
+  `L=8192`. The **rematerializing scan** (default) recomputes them in a hand-derived backward,
+  holding only inputs and small per-chunk carries: peak VRAM stays ~flat (≈1 GB at `L=8192`,
+  a **32× reduction**) and is ~20% faster.
+
+The Rust table above uses the original `matrix` within-chunk algorithm. Two further
+optimizations (see [`rust/PERFORMANCE.md`](rust/PERFORMANCE.md)) close most of the gap to XLA:
+
+- **`hillis` (now the default)** — a Hillis–Steele parallel prefix scan (`O(L·log cs)`, the
+  portable analogue of `jax.lax.associative_scan`) replaces the `O(L·cs)` matrix form: **~3–4×
+  faster**, same memory, all backends.
+- **`cubecl` (opt-in GPU kernel)** — a custom prefix-scan kernel brings the **forward to ~1.5×
+  of JAX/XLA** (from ~30×). The remaining forward+backward gap (~3×) is the backward, which
+  still runs through burn ops rather than a kernel.
+
+burn's kernel-fusion backend (`--features fusion`, the XLA-fusion analogue) made **no**
+difference here — the cost is large matmul/reduction ops, not the elementwise chains fusion
+targets; the lever was the scan *algorithm*, not fusion.

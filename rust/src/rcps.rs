@@ -35,7 +35,10 @@ impl<B: Backend> RcpsWrapper<B> {
     }
 
     /// Forward pass, `(B, L, 2D) -> (B, L, 2D)`.
-    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3>
+    where
+        B: crate::remat::ScanBackend,
+    {
         let [bb, l, dd] = x.dims();
         let d = dd / 2;
         let sense = x.clone().slice([0..bb, 0..l, 0..d]);

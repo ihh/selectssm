@@ -55,6 +55,14 @@ Properties:
 | Recursive scan | `recursive_scan=True` | Recursively splits sequence for lower peak memory |
 | Custom VJP scan | `custom_vjp_scan=True` | Recursive scan with hand-written backward pass for minimal memory |
 
+**The chunked scan is the default, and benchmarking confirms it is also the most efficient of
+the three** — on an RTX A6000 it is ~10× faster on the forward and ~25–30× faster on
+forward+backward than `recursive_scan` / `custom_vjp_scan`, at equal (low, `@jax.remat`-bounded)
+memory, and is the only strategy that supports the complex-SSM RoPE trick. The other two remain
+available for experimentation. Reproduce with `python3 ../scripts/benchmark_scaling.py` (writes
+`../fixtures/benchmark_scaling.csv`); see the top-level
+[Performance & scaling](../README.md#performance--scaling) section for the full table.
+
 ## Installation
 
 This package lives in the `jax/` subdirectory of the repository:

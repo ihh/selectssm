@@ -33,7 +33,10 @@ impl<B: Backend> BidirectionalMamba<B> {
     }
 
     /// Forward pass, `(B, L, D) -> (B, L, D)`.
-    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3>
+    where
+        B: crate::remat::ScanBackend,
+    {
         let cfg = &self.cfg;
         let w = &self.weights;
         let [bb, l, d_in] = x.dims();

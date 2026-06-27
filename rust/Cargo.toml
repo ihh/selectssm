@@ -1,3 +1,9 @@
+[workspace]
+# The core crate is the root package (`.`); the cubecl GPU-kernel scan is isolated in a member
+# crate so its `unsafe` kernel-launch code and heavy cubecl deps stay out of the core crate
+# (which keeps `#![forbid(unsafe_code)]`).  Pulled in only by the optional `cubecl` feature.
+members = [".", "selectssm-cubecl"]
+
 [package]
 name = "selectssm"
 version = "0.1.0"
@@ -6,6 +12,11 @@ description = "Selective SSM (Mamba) with the Mamba-3 complex-SSM RoPE trick, po
 
 [dependencies]
 burn = { version = "0.21", default-features = false, features = ["std", "autodiff", "ndarray"] }
+# Direct handle on the autodiff crate (re-exported by `burn`) so the rematerializing chunked
+# scan can register a custom `Backward` op.  Pinned to the same version `burn` resolves.
+burn-autodiff = { version = "0.21", default-features = false, features = ["std"] }
+# The cubecl within-chunk scan kernel (optional; see the `cubecl` feature).
+selectssm-cubecl = { path = "selectssm-cubecl", optional = true }
 safetensors = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -14,6 +25,13 @@ serde_json = "1"
 default = []
 # Enable the WebGPU backend (also bumps recursion for its type nesting; see lib.rs).
 wgpu = ["burn/wgpu"]
+# Kernel-fusion JIT decorator (burn-fusion over cubecl): fuses element-wise op chains into
+# single GPU kernels, the burn analogue of XLA op fusion.  Turns `burn::backend::Wgpu` into
+# `Fusion<CubeBackend<..>>`.  Combine with `wgpu`, e.g. `--features wgpu,fusion`.
+fusion = ["burn/fusion"]
+# Custom cubecl GPU prefix-scan kernel for the within-chunk scan (`ScanAlgo::Cubecl`).  Pulls
+# in the `selectssm-cubecl` member crate and requires the (non-fusion) wgpu backend.
+cubecl = ["dep:selectssm-cubecl", "wgpu"]
 # The RCPS reverse-complement parameter-sharing wrapper is severable.
 rcps = []
 

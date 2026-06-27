@@ -1,0 +1,11 @@
+[package]
+name = "selectssm-cubecl"
+version = "0.1.0"
+edition = "2021"
+description = "cubecl GPU within-chunk scan kernel for selectssm (optional)"
+
+[dependencies]
+# Same burn (wgpu, non-fusion) as the core crate so `burn::backend::Wgpu` is the identical type.
+burn = { version = "0.21", default-features = false, features = ["std", "wgpu"] }
+burn-cubecl = { version = "0.21", default-features = false, features = ["std"] }
+cubecl = { version = "0.10", default-features = false, features = ["std"] }

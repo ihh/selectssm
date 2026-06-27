@@ -70,8 +70,15 @@ fn check<B: AutodiffBackend>(
     assert!(gp < grad_tol, "{name}: grad_param rel {gp:.3e} ({worst}) >= {grad_tol:.0e}");
 }
 
-/// Run every manifest case on backend `B`.
-pub fn run_all<B: AutodiffBackend>(device: B::Device, fwd_tol: f32, grad_tol: f32) {
+/// Run every manifest case on backend `B`.  `use_remat` selects the rematerializing chunked
+/// scan (true) or the reference scan (false); the assertions are identical for both.
+pub fn run_all<B: AutodiffBackend + selectssm::remat::ScanBackend>(
+    device: B::Device,
+    fwd_tol: f32,
+    grad_tol: f32,
+    use_remat: bool,
+    algo: selectssm::config::ScanAlgo,
+) {
     let dir = fixtures_dir();
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).expect("read manifest"))
@@ -86,15 +93,19 @@ pub fn run_all<B: AutodiffBackend>(device: B::Device, fwd_tol: f32, grad_tol: f3
 
         match kind {
             "selective_ssm" => {
-                let cfg: SelectiveSsmConfig = serde_json::from_value(case["config"].clone()).unwrap();
+                let mut cfg: SelectiveSsmConfig = serde_json::from_value(case["config"].clone()).unwrap();
+                cfg.use_remat = use_remat;
+                cfg.scan_algo = algo;
                 let model = SelectiveSsm::load(&store, "", cfg);
                 model.named("", &mut named);
                 let out = model.forward(xin.clone());
                 check(name, &store, out, xin, &named, fwd_tol, grad_tol);
             }
             "bidirectional" => {
-                let cfg: BidirectionalMambaConfig =
+                let mut cfg: BidirectionalMambaConfig =
                     serde_json::from_value(case["config"].clone()).unwrap();
+                cfg.use_remat = use_remat;
+                cfg.scan_algo = algo;
                 let model = BidirectionalMamba::load(&store, "", cfg);
                 model.named("", &mut named);
                 let out = model.forward(xin.clone());
@@ -103,8 +114,10 @@ pub fn run_all<B: AutodiffBackend>(device: B::Device, fwd_tol: f32, grad_tol: f3
             "rcps" => {
                 #[cfg(feature = "rcps")]
                 {
-                    let cfg: BidirectionalMambaConfig =
+                    let mut cfg: BidirectionalMambaConfig =
                         serde_json::from_value(case["config"].clone()).unwrap();
+                    cfg.use_remat = use_remat;
+                cfg.scan_algo = algo;
                     let model = selectssm::rcps::RcpsWrapper::load(&store, cfg);
                     model.named(&mut named);
                     let out = model.forward(xin.clone());
@@ -112,6 +125,7 @@ pub fn run_all<B: AutodiffBackend>(device: B::Device, fwd_tol: f32, grad_tol: f3
                 }
                 #[cfg(not(feature = "rcps"))]
                 {
+                    let _ = use_remat;
                     println!("  {name:26} skipped (build without the `rcps` feature)");
                 }
             }
@@ -123,8 +137,12 @@ pub fn run_all<B: AutodiffBackend>(device: B::Device, fwd_tol: f32, grad_tol: f3
 #[test]
 fn parity_ndarray() {
     use burn::backend::{Autodiff, NdArray};
-    println!("\n== fixture parity: ndarray ==");
-    run_all::<Autodiff<NdArray>>(Default::default(), 1e-4, 1e-3);
+    use selectssm::config::ScanAlgo::{Hillis, Matrix};
+    // Every (remat × algorithm) combination must match the JAX oracle.
+    for (remat, algo) in [(true, Matrix), (true, Hillis), (false, Matrix), (false, Hillis)] {
+        println!("\n== fixture parity: ndarray (remat={remat}, {algo:?}) ==");
+        run_all::<Autodiff<NdArray>>(Default::default(), 1e-4, 1e-3, remat, algo);
+    }
 }
 
 #[cfg(feature = "wgpu")]
@@ -143,7 +161,15 @@ fn parity_wgpu() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = catch_unwind(AssertUnwindSafe(|| {
-        run_all::<Autodiff<Wgpu>>(WgpuDevice::default(), 1e-3, 2e-2);
+        use selectssm::config::ScanAlgo::{Cubecl, Hillis, Matrix};
+        // Cubecl uses the GPU kernel only with `--features cubecl` in the rematerializing path;
+        // otherwise it falls back to Hillis. Validate it against the oracle either way.
+        for (remat, algo) in [
+            (true, Matrix), (true, Hillis), (true, Cubecl),
+            (false, Matrix), (false, Hillis),
+        ] {
+            run_all::<Autodiff<Wgpu>>(WgpuDevice::default(), 1e-3, 2e-2, remat, algo);
+        }
     }));
     std::panic::set_hook(prev);
     if result.is_err() {

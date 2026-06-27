@@ -116,7 +116,7 @@ fn init_model(complex: bool, rng: &mut Rng, dev: &Dev) -> ParityModel<B> {
     }
 }
 
-impl<B: Backend> ParityModel<B> {
+impl<B: Backend + selectssm::remat::ScanBackend> ParityModel<B> {
     fn ssm_cfg(&self) -> SelectiveSsmConfig {
         SelectiveSsmConfig {
             hidden_features: N,
@@ -125,6 +125,8 @@ impl<B: Backend> ParityModel<B> {
             use_complex_ssm: self.complex,
             chunk_size: CHUNK,
             n_channel_groups: 1,
+            use_remat: true,
+            scan_algo: selectssm::config::ScanAlgo::Hillis,
             dt_rank: R,
             dt_proj: true,
             shift_conv_size: 3,
