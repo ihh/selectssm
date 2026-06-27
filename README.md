@@ -1,7 +1,7 @@
 # selectssm
 
 A self-contained selective state space model (Mamba) sequence layer,
-with parallel implementations in JAX/[Flax](https://flax.readthedocs.io/en/stable/) and Rust/[burn](https://burn.dev),
+with parallel implementations in JAX ([Flax](https://flax.readthedocs.io/en/stable/)) and Rust ([burn](https://burn.dev)),
 sharing a common vocabulary and test suite so the two implementations are verified to agree numerically.
 
 The layer provides:
