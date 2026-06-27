@@ -37,6 +37,11 @@ use crate::chunked_scan::{
 };
 use crate::config::ScanAlgo;
 
+/// Internal block size the cubecl scan kernel uses, independent of the model's `chunk_size`
+/// (which tunes the matrix/Hillis forms).  ~256 balances launch amortisation against the
+/// kernel's per-channel serial chain length (measured sweet spot on an RTX A6000).
+const CUBECL_BLOCK: usize = 256;
+
 /// Options controlling the chunked scan, bundled to keep [`ScanBackend::chunked_scan`] tidy as
 /// more backends/algorithms are added.
 #[derive(Debug, Clone, Copy)]
@@ -472,7 +477,15 @@ impl<B: ScanBackend, C: CheckpointStrategy> ScanBackend for Autodiff<B, C> {
         let [bb, l, d] = u.dims();
         let n = a.dims()[1];
         let h = n / 2;
-        let cs = opts.chunk_size;
+        // The chunk size is a pure performance knob — the scan result is identical for any
+        // value.  The cubecl kernel is one-thread-per-channel sequential, so it wants a
+        // moderate block (long enough to amortise launches, short enough to keep the serial
+        // chain cheap); ~256 is the measured sweet spot and is decoupled here from the model's
+        // `chunk_size` (which is tuned for the matrix/Hillis forms).
+        let cs = match opts.algo {
+            ScanAlgo::Cubecl => CUBECL_BLOCK.min(l.next_power_of_two().max(1)),
+            _ => opts.chunk_size,
+        };
         let pad = (cs - l % cs) % cs;
         let n_chunks = (l + pad) / cs;
         let use_complex = theta.is_some();
