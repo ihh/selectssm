@@ -132,3 +132,9 @@ optimizations (see [`rust/PERFORMANCE.md`](rust/PERFORMANCE.md)) close most of t
 burn's kernel-fusion backend (`--features fusion`, the XLA-fusion analogue) made **no**
 difference here — the cost is large matmul/reduction ops, not the elementwise chains fusion
 targets; the lever was the scan *algorithm*, not fusion.
+
+## Acknowledgements
+
+I am indebted to the [Kelley group](https://www.calicolabs.com/people/david-kelley-ph-d/) at Calico Life Sciences for encouraging and stimulating discussions during the development of the JAX Mamba port.
+The first application of this work was to functional genomics models, as described in Holmes, Linder & Kelley (2025), [Selective State Space Models Outperform Transformers at Predicting RNA-Seq Read Coverage
+](https://pubmed.ncbi.nlm.nih.gov/40027744/).
