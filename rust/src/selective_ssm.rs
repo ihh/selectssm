@@ -99,6 +99,11 @@ pub fn forward_ssm<B: ScanBackend>(
         let u = causal_conv1d(x, &w.conv, cfg.shift_conv_size);
         let u = activation(&cfg.activation, u);
 
+        // The complex-SSM RoPE trick pairs (re, im) state entries, so it requires even N.
+        if cfg.use_complex_ssm && n % 2 != 0 {
+            panic!("use_complex_ssm requires an even hidden_features (N); got N={n}");
+        }
+
         // Transition coefficients A = -exp(A_log); complex mode ties each (re, im) pair.
         // A_log is clamped to [-20, 20] purely as a numerical guard: exp() is the only
         // unbounded function of a learnable parameter here, and an exploding A_log would make
@@ -119,13 +124,40 @@ pub fn forward_ssm<B: ScanBackend>(
         let mut dt = w.dt.forward(u.clone()); // (B, L, R)
         if let Some(dp) = &w.dt_proj {
             dt = dp.forward(dt); // (B, L, D)
+        } else if cfg.dt_rank > 1 {
+            // dt_proj disabled: map the low-rank dt (width R) to D by block-repeat, matching
+            // JAX `jnp.repeat(dt, D // dt_rank, axis=-1)` — each of the R entries repeated D/R
+            // times (a,a,...,b,b,...).  NB `repeat_dim` in burn TILES (a,b,a,b,...), so we build
+            // the block-repeat via reshape+tile+reshape.  Requires dt_rank | D.
+            if d % cfg.dt_rank != 0 {
+                panic!("dt_rank={} must divide D={d}", cfg.dt_rank);
+            }
+            let rep = d / cfg.dt_rank;
+            dt = dt
+                .reshape([bb, l, cfg.dt_rank, 1])
+                .repeat_dim(3, rep)
+                .reshape([bb, l, d]); // (a,a,...,b,b,...) block-repeat R -> D
+        } else {
+            // dt_rank == 1: JAX broadcasts width-1 dt against D; the scan needs an explicit
+            // width-D tensor, so broadcast-repeat (every channel gets the same dt) — identical.
+            dt = dt.repeat_dim(2, d);
         }
         let dt = softplus(dt);
 
         let theta = w.theta.as_ref().map(|t| t.forward(u.clone())); // (B, L, N/2)
 
+        // n_channel_groups (K) must divide D.  The Rust scan shares B/C across groups, which is
+        // numerically identical to the JAX grouped tiling (B/C do not vary across groups), so
+        // the tiling itself is a no-op — only the divisibility validation is ported here.
+        if d % cfg.n_channel_groups != 0 {
+            panic!(
+                "n_channel_groups={} must divide D={d}",
+                cfg.n_channel_groups
+            );
+        }
+
         let opts = ScanOpts {
-            chunk_size: cfg.chunk_size,
+            chunk_size: crate::config::resolve_chunk_size(cfg.chunk_size, l, cfg.n_channel_groups),
             use_remat: cfg.use_remat,
             algo: cfg.scan_algo,
         };

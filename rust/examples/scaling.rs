@@ -83,7 +83,7 @@ fn cfg_for(
         reverse: false,
         complement: false,
         use_complex_ssm: mode == "complex",
-        chunk_size: chunk,
+        chunk_size: Some(chunk),
         n_channel_groups: 1,
         use_remat,
         scan_algo: algo,
