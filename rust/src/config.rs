@@ -8,6 +8,35 @@ fn one() -> usize { 1 }
 fn three() -> usize { 3 }
 fn yes() -> bool { true }
 fn silu() -> String { "silu".to_string() }
+fn rms() -> String { "rms".to_string() }
+fn two() -> usize { 2 }
+fn tenth() -> f64 { 0.1 }
+fn point_nine() -> f64 { 0.9 }
+
+/// The JAX default for `chunk_size` when it is `None`:
+/// `largest_factor_up_to(floor(sqrt(K*L)), L)` (see `selectssm.py:largest_factor_up_to`).
+pub fn largest_factor_up_to(b: usize, n: usize) -> usize {
+    if n < 2 {
+        return n;
+    }
+    let mut k = b;
+    while n % k != 0 {
+        k -= 1;
+    }
+    k
+}
+
+/// Resolve the chunk size for a sequence of length `l` with `k` channel groups: the config
+/// value when present, else the JAX default `largest_factor_up_to(floor(sqrt(k*l)), l)`.
+pub fn resolve_chunk_size(chunk_size: Option<usize>, l: usize, k: usize) -> usize {
+    match chunk_size {
+        Some(cs) => cs,
+        None => {
+            let b = ((k * l) as f64).sqrt() as usize;
+            largest_factor_up_to(b.max(1), l)
+        }
+    }
+}
 // Hillis–Steele is the default within-chunk scan: ~3–4× faster than the matrix form at equal
 // memory/parity, pure burn ops (all backends), and free of the matrix form's `cs²` GPU-buffer
 // blow-up.  `ScanAlgo::Cubecl` is faster still where the `cubecl` feature + wgpu are available.
@@ -43,7 +72,10 @@ pub struct SelectiveSsmConfig {
     /// Enable the complex-SSM "RoPE trick".
     #[serde(default)]
     pub use_complex_ssm: bool,
-    pub chunk_size: usize,
+    /// Within-chunk block size.  `None` (JAX default) resolves to
+    /// `largest_factor_up_to(floor(sqrt(K*L)), L)` at forward time.
+    #[serde(default)]
+    pub chunk_size: Option<usize>,
     #[serde(default = "one")]
     pub n_channel_groups: usize,
     /// Use the rematerializing chunked scan (recompute chunk intermediates in the backward
@@ -80,13 +112,26 @@ pub struct BidirectionalMambaConfig {
     pub concatenate_fwd_rev: bool,
     #[serde(default = "silu")]
     pub activation: String,
-    #[serde(default)]
+    /// `"rms"` (default) | `"layer"` | `"group"` | `"batch"`; any other value (incl. `""`,
+    /// `"none"`) means no normalization — matching the JAX fall-through.
+    #[serde(default = "rms")]
     pub norm_type: String,
+    /// BatchNorm momentum (only used when `norm_type == "batch"`).
+    #[serde(default = "point_nine")]
+    pub bn_momentum: f64,
     #[serde(default)]
     pub mlp_layer: bool,
+    /// MLP hidden width multiplier (`dense_expansion * D`); only used when `mlp_layer`.
+    #[serde(default = "two")]
+    pub dense_expansion: usize,
+    /// MLP dropout rate; a no-op at inference (`train=False`), kept for config fidelity.
+    #[serde(default = "tenth")]
+    pub mlp_dropout_rate: f64,
     #[serde(default)]
     pub use_complex_ssm: bool,
-    pub chunk_size: usize,
+    /// Within-chunk block size for the inner SSMs (`None` → JAX default).
+    #[serde(default)]
+    pub chunk_size: Option<usize>,
     #[serde(default = "one")]
     pub n_channel_groups: usize,
     #[serde(default = "yes")]

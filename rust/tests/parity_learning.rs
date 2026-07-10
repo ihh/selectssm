@@ -123,7 +123,7 @@ impl<B: Backend + selectssm::remat::ScanBackend> ParityModel<B> {
             reverse: false,
             complement: false,
             use_complex_ssm: self.complex,
-            chunk_size: CHUNK,
+            chunk_size: Some(CHUNK),
             n_channel_groups: 1,
             use_remat: true,
             scan_algo: selectssm::config::ScanAlgo::Hillis,
