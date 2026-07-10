@@ -13,6 +13,7 @@ use burn::tensor::{Tensor, TensorData};
 
 use selectssm::config::SelectiveSsmConfig;
 use selectssm::loader::{Linear, SsmWeights};
+use selectssm::rng::Rng;
 use selectssm::selective_ssm::forward_ssm;
 
 type B = Autodiff<NdArray>;
@@ -22,29 +23,6 @@ const DM: usize = 32; // d_model
 const N: usize = 16; // state width
 const R: usize = 2; // dt rank
 const CHUNK: usize = 4;
-
-// ---- a small, fully seeded RNG so the test is deterministic ----
-struct Rng(u64);
-impl Rng {
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-    fn uniform(&mut self) -> f32 {
-        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
-    }
-    fn normal(&mut self) -> f32 {
-        let u1 = self.uniform().max(1e-7);
-        let u2 = self.uniform();
-        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
-    }
-    fn bit(&mut self) -> f32 {
-        (self.next_u64() & 1) as f32
-    }
-}
 
 fn randn<const D: usize>(shape: [usize; D], std: f32, rng: &mut Rng, dev: &Dev) -> Param<Tensor<B, D>> {
     let n: usize = shape.iter().product();
@@ -78,37 +56,42 @@ struct ParityModel<B: Backend> {
     complex: bool,
 }
 
+/// Wrap a plain (require_grad) tensor as a trainable `Param`.
+fn as_param<const D: usize>(t: Tensor<B, D>) -> Param<Tensor<B, D>> {
+    Param::from_tensor(t)
+}
+
 fn init_model(complex: bool, rng: &mut Rng, dev: &Dev) -> ParityModel<B> {
     let h = N / 2;
-    let a_w = if complex { h } else { N };
-    // A_log initialised so that A = -(1..=a_w), tiled across channels (matches JAX).
-    let a_row: Vec<f32> = (1..=a_w).map(|k| (k as f32).ln()).collect();
-    let a_vals: Vec<f32> = (0..DM).flat_map(|_| a_row.clone()).collect();
-    let a_log = Param::from_tensor(Tensor::<B, 2>::from_data(TensorData::new(a_vals, [DM, a_w]), dev));
+    // Build the selective-SSM weights via the shared library init (the ONE init path), then
+    // adopt its tensors as trainable Params.  This exercises `SsmWeights::init` end-to-end as a
+    // training initializer — A_log/D/dt-bias constants and the lecun-normal kernels all come from
+    // the library, so the test doubles as the proof the init is training-usable.
+    let cfg = ssm_cfg_for(complex);
+    let ssm = SsmWeights::<B>::init(DM, &cfg, rng, dev);
+    let dt_proj = ssm.dt_proj.expect("dt_proj enabled in ssm_cfg_for");
+    // The parity head/embedding/norm are outside the SSM module, so they stay hand-initialized.
+    let (theta_k, theta_b) = match ssm.theta {
+        Some(t) => (as_param(t.weight), as_param(t.bias.expect("theta bias"))),
+        // Non-complex: theta unused, but the field must exist; init it lecun-like for shape.
+        None => (
+            randn([DM, h], (1.0 / DM as f32).sqrt(), rng, dev),
+            constant([h], 0.0, dev),
+        ),
+    };
     ParityModel {
         embed: randn([2, DM], 1.0, rng, dev),
-        conv: randn([3, 1, DM], 0.3, rng, dev),
-        bc_k: randn([DM, 2 * N], (1.0 / DM as f32).sqrt(), rng, dev),
-        bc_b: constant([2 * N], 0.0, dev),
-        a_log,
-        d_skip: constant([DM], 1.0, dev),
-        dt_k: randn([DM, R], (1.0 / DM as f32).sqrt(), rng, dev),
-        dt_b: constant([R], 0.0, dev),
-        dtp_k: randn([R, DM], (1.0 / R as f32).sqrt(), rng, dev),
-        // dt bias = inverse_softplus(uniform(dt_min, dt_max)) per channel, matching JAX.
-        // This spreads dt across [0.001, 0.1], giving some near-unit-decay channels that can
-        // persist state over long sequences (essential for length-generalizing parity).
-        dtp_b: {
-            let vals: Vec<f32> = (0..DM)
-                .map(|_| {
-                    let y = 0.001 + (0.1 - 0.001) * rng.uniform();
-                    (y.exp() - 1.0).ln()
-                })
-                .collect();
-            Param::from_tensor(Tensor::<B, 1>::from_data(TensorData::new(vals, [DM]), dev))
-        },
-        theta_k: randn([DM, h], 0.5, rng, dev),
-        theta_b: constant([h], 0.0, dev),
+        conv: as_param(ssm.conv),
+        bc_k: as_param(ssm.bc.weight),
+        bc_b: as_param(ssm.bc.bias.expect("BC bias")),
+        a_log: as_param(ssm.a_log),
+        d_skip: as_param(ssm.d),
+        dt_k: as_param(ssm.dt.weight),
+        dt_b: as_param(ssm.dt.bias.expect("dt bias")),
+        dtp_k: as_param(dt_proj.weight),
+        dtp_b: as_param(dt_proj.bias.expect("dt_proj bias")),
+        theta_k,
+        theta_b,
         norm: constant([DM], 1.0, dev),
         head_k: randn([DM, 2], (1.0 / DM as f32).sqrt(), rng, dev),
         head_b: constant([2], 0.0, dev),
@@ -116,22 +99,27 @@ fn init_model(complex: bool, rng: &mut Rng, dev: &Dev) -> ParityModel<B> {
     }
 }
 
+/// The inner SSM config used both to init the weights and to run the forward pass.
+fn ssm_cfg_for(complex: bool) -> SelectiveSsmConfig {
+    SelectiveSsmConfig {
+        hidden_features: N,
+        reverse: false,
+        complement: false,
+        use_complex_ssm: complex,
+        chunk_size: Some(CHUNK),
+        n_channel_groups: 1,
+        use_remat: true,
+        scan_algo: selectssm::config::ScanAlgo::Hillis,
+        dt_rank: R,
+        dt_proj: true,
+        shift_conv_size: 3,
+        activation: "silu".to_string(),
+    }
+}
+
 impl<B: Backend + selectssm::remat::ScanBackend> ParityModel<B> {
     fn ssm_cfg(&self) -> SelectiveSsmConfig {
-        SelectiveSsmConfig {
-            hidden_features: N,
-            reverse: false,
-            complement: false,
-            use_complex_ssm: self.complex,
-            chunk_size: Some(CHUNK),
-            n_channel_groups: 1,
-            use_remat: true,
-            scan_algo: selectssm::config::ScanAlgo::Hillis,
-            dt_rank: R,
-            dt_proj: true,
-            shift_conv_size: 3,
-            activation: "silu".to_string(),
-        }
+        ssm_cfg_for(self.complex)
     }
 
     fn ssm_weights(&self) -> SsmWeights<B> {
