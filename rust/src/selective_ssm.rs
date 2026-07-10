@@ -66,6 +66,13 @@ impl<B: Backend> SelectiveSsm<B> {
         SelectiveSsm { cfg, weights }
     }
 
+    /// From-scratch init at channel width `d` with fresh seeded weights (see
+    /// [`SsmWeights::init`] for the per-parameter init distributions).
+    pub fn init(d: usize, cfg: SelectiveSsmConfig, rng: &mut crate::rng::Rng, dev: &B::Device) -> Self {
+        let weights = SsmWeights::init(d, &cfg, rng, dev);
+        SelectiveSsm { cfg, weights }
+    }
+
     pub fn named(&self, prefix: &str, out: &mut Vec<(String, P<B>)>) {
         self.weights.named(prefix, out);
     }

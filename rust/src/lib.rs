@@ -20,6 +20,7 @@ compile_error!("features `cubecl` and `fusion` are mutually exclusive");
 
 pub mod config;
 pub mod loader;
+pub mod rng;
 pub mod chunked_scan;
 pub mod remat;
 pub mod selective_ssm;

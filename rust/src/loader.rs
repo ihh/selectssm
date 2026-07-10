@@ -8,6 +8,55 @@ use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::{Tensor, TensorData};
 
 use crate::config::SelectiveSsmConfig;
+use crate::rng::Rng;
+
+/// dt-bias uniform range (mirrors the JAX `SelectiveSSM.dt_min`/`dt_max`).
+const DT_MIN: f32 = 0.001;
+const DT_MAX: f32 = 0.1;
+
+/// The standard-deviation of a standard normal truncated to `±2` (i.e. the factor Flax's
+/// `variance_scaling` divides out with `1 / .8796256...` so that the *post*-truncation stddev
+/// equals `sqrt(scale / fan_in)`).  See `jax.nn.initializers.variance_scaling`.
+const TRUNC2_STD: f32 = 0.879_925_66;
+
+/// `inverse_softplus(x) = x + ln(1 - exp(-x))` (matches `selectssm.py:16`).
+fn inverse_softplus(x: f32) -> f32 {
+    x + (1.0 - (-x).exp()).ln()
+}
+
+/// A single draw from a standard normal truncated to `±2` (rejection sampling).
+fn trunc_normal2(rng: &mut Rng) -> f32 {
+    loop {
+        let z = rng.normal();
+        if z.abs() <= 2.0 {
+            return z;
+        }
+    }
+}
+
+/// A Vec of `n` lecun-normal draws with the given `fan_in`.
+///
+/// This is Flax's `lecun_normal` = `variance_scaling(1.0, "fan_in", "truncated_normal")`
+/// implemented faithfully: standard-normal samples truncated to `±2` then scaled so the
+/// post-truncation stddev is exactly `sqrt(1 / fan_in)` (the `1/0.8796256` correction).
+fn lecun_normal_vec(n: usize, fan_in: usize, rng: &mut Rng) -> Vec<f32> {
+    let std = (1.0 / fan_in as f32).sqrt() / TRUNC2_STD;
+    (0..n).map(|_| trunc_normal2(rng) * std).collect()
+}
+
+/// A rank-2 lecun-normal kernel of shape `(fan_in, fan_out)`.
+fn lecun_kernel2<B: Backend>(fan_in: usize, fan_out: usize, rng: &mut Rng, dev: &B::Device) -> Tensor<B, 2> {
+    let v = lecun_normal_vec(fan_in * fan_out, fan_in, rng);
+    Tensor::from_data(TensorData::new(v, [fan_in, fan_out]), dev)
+}
+
+fn zeros1<B: Backend>(n: usize, dev: &B::Device) -> Tensor<B, 1> {
+    Tensor::from_data(TensorData::new(vec![0.0f32; n], [n]), dev)
+}
+
+fn ones1<B: Backend>(n: usize, dev: &B::Device) -> Tensor<B, 1> {
+    Tensor::from_data(TensorData::new(vec![1.0f32; n], [n]), dev)
+}
 
 fn bytes_to_f32(data: &[u8]) -> Vec<f32> {
     data.chunks_exact(4)
@@ -95,6 +144,33 @@ pub struct Linear<B: Backend> {
 }
 
 impl<B: Backend> Linear<B> {
+    /// From-scratch init: lecun-normal `(in, out)` kernel; bias per `bias` (`Some(vec)` sets an
+    /// explicit bias, `None` omits it).  Mirrors Flax `nn.Dense(kernel_init=lecun_normal(), ...)`.
+    fn init_with_bias(
+        din: usize,
+        dout: usize,
+        bias: Option<Vec<f32>>,
+        rng: &mut Rng,
+        dev: &B::Device,
+    ) -> Self {
+        let weight = lecun_kernel2::<B>(din, dout, rng, dev).require_grad();
+        let bias = bias.map(|v| {
+            debug_assert_eq!(v.len(), dout);
+            Tensor::from_data(TensorData::new(v, [dout]), dev).require_grad()
+        });
+        Linear { weight, bias }
+    }
+
+    /// Lecun-normal kernel + zero bias (Flax `nn.Dense` default: `use_bias=True`, zero bias).
+    pub fn init(din: usize, dout: usize, rng: &mut Rng, dev: &B::Device) -> Self {
+        Self::init_with_bias(din, dout, Some(vec![0.0; dout]), rng, dev)
+    }
+
+    /// Lecun-normal kernel with an explicit bias vector (e.g. the dt inverse-softplus bias).
+    pub fn init_bias(din: usize, dout: usize, bias: Vec<f32>, rng: &mut Rng, dev: &B::Device) -> Self {
+        Self::init_with_bias(din, dout, Some(bias), rng, dev)
+    }
+
     pub fn load(store: &Store<B>, prefix: &str, bias: bool) -> Self {
         let weight = store
             .tensor::<2>(&format!("param/{prefix}/kernel"))
@@ -138,6 +214,71 @@ pub struct SsmWeights<B: Backend> {
 }
 
 impl<B: Backend> SsmWeights<B> {
+    /// From-scratch init of one selective SSM's weights, mirroring the JAX `SelectiveSSM`
+    /// `@nn.compact __call__`.  `d` is the (expanded) channel width the SSM runs at; `cfg`
+    /// supplies `hidden_features` (N), `dt_rank` (R), `dt_proj`, `use_complex_ssm`, and
+    /// `shift_conv_size` (k).
+    ///
+    /// Init map (see `jax/src/selectssm/selectssm.py`):
+    /// * `shift_conv` — depthwise kernel `(k, 1, d)`, lecun-normal (fan_in = k), **no bias**.
+    /// * `BC` Dense (d → 2N) — lecun-normal kernel, zero bias.
+    /// * `A_log` — `log(repeat(arange(1..=w), d))` → `(d, w)`, `w = N` (real) or `N/2` (complex).
+    /// * `D` (skip) — ones `(d,)`.
+    /// * `dt` Dense (d → R) — lecun-normal kernel; bias = zeros if `dt_proj`, else
+    ///   `inverse_softplus(uniform(dt_min, dt_max))` `(R,)`.
+    /// * `dt_proj` Dense (R → d) — lecun-normal kernel; bias = `inverse_softplus(uniform)` `(d,)`.
+    /// * `theta` Dense (d → N/2) — lecun-normal kernel, zero bias (only if `use_complex_ssm`).
+    pub fn init(d: usize, cfg: &SelectiveSsmConfig, rng: &mut Rng, dev: &B::Device) -> Self {
+        let n = cfg.hidden_features;
+        let r = cfg.dt_rank;
+        let k = cfg.shift_conv_size;
+
+        // shift_conv depthwise kernel (k, 1, d), lecun-normal with fan_in = k, no bias.
+        let conv_v = lecun_normal_vec(k * d, k, rng);
+        let conv = Tensor::<B, 3>::from_data(TensorData::new(conv_v, [k, 1, d]), dev).require_grad();
+
+        // BC Dense (d -> 2N), lecun kernel + zero bias.
+        let bc = Linear::init(d, 2 * n, rng, dev);
+
+        // A_log = log(repeat(arange(1..=w)[None,:], d, axis=0)) -> (d, w).
+        let w = if cfg.use_complex_ssm { n / 2 } else { n };
+        let a_row: Vec<f32> = (1..=w).map(|kk| (kk as f32).ln()).collect();
+        let a_vals: Vec<f32> = (0..d).flat_map(|_| a_row.clone()).collect();
+        let a_log = Tensor::<B, 2>::from_data(TensorData::new(a_vals, [d, w]), dev).require_grad();
+
+        // D skip = ones(d).
+        let d_skip = ones1::<B>(d, dev).require_grad();
+
+        // dt Dense (d -> R): zero bias if dt_proj, else inverse_softplus(uniform(dt_min, dt_max)).
+        let dt = if cfg.dt_proj {
+            Linear::init(d, r, rng, dev)
+        } else {
+            let bias: Vec<f32> = (0..r)
+                .map(|_| inverse_softplus(rng.uniform_range(DT_MIN, DT_MAX)))
+                .collect();
+            Linear::init_bias(d, r, bias, rng, dev)
+        };
+
+        // dt_proj Dense (R -> d): lecun kernel + inverse_softplus(uniform) bias (d,).
+        let dt_proj = if cfg.dt_proj {
+            let bias: Vec<f32> = (0..d)
+                .map(|_| inverse_softplus(rng.uniform_range(DT_MIN, DT_MAX)))
+                .collect();
+            Some(Linear::init_bias(r, d, bias, rng, dev))
+        } else {
+            None
+        };
+
+        // theta Dense (d -> N/2): lecun kernel + zero bias (complex-SSM only).
+        let theta = if cfg.use_complex_ssm {
+            Some(Linear::init(d, n / 2, rng, dev))
+        } else {
+            None
+        };
+
+        SsmWeights { conv, bc, a_log, d: d_skip, dt, dt_proj, theta }
+    }
+
     pub fn load(store: &Store<B>, prefix: &str, cfg: &SelectiveSsmConfig) -> Self {
         let p = |n: &str| format!("{prefix}{n}");
         SsmWeights {
@@ -224,6 +365,30 @@ pub struct NormWeights<B: Backend> {
 }
 
 impl<B: Backend> NormWeights<B> {
+    /// From-scratch init over `d` channels (Flax norm defaults): scale = ones for all norms;
+    /// bias = zeros for layer/group/batch; BatchNorm running mean = zeros, var = ones.
+    pub fn init(d: usize, norm_type: &str, dev: &B::Device) -> Self {
+        let kind = NormKind::parse(norm_type);
+        let (scale, bias, mean, var) = match kind {
+            NormKind::Identity => (None, None, None, None),
+            NormKind::Rms => (Some(ones1::<B>(d, dev).require_grad()), None, None, None),
+            NormKind::Layer | NormKind::Group => (
+                Some(ones1::<B>(d, dev).require_grad()),
+                Some(zeros1::<B>(d, dev).require_grad()),
+                None,
+                None,
+            ),
+            NormKind::Batch => (
+                Some(ones1::<B>(d, dev).require_grad()),
+                Some(zeros1::<B>(d, dev).require_grad()),
+                // Running stats: mean = zeros, var = ones (Flax BatchNorm defaults).
+                Some(zeros1::<B>(d, dev)),
+                Some(ones1::<B>(d, dev)),
+            ),
+        };
+        NormWeights { kind, scale, bias, mean, var }
+    }
+
     fn load(store: &Store<B>, prefix: &str, norm_type: &str) -> Self {
         let kind = NormKind::parse(norm_type);
         let m = kind.module_name();
@@ -281,6 +446,44 @@ pub struct BidirWeights<B: Backend> {
 }
 
 impl<B: Backend> BidirWeights<B> {
+    /// From-scratch init of a whole bidirectional block, mirroring the JAX `BidirectionalMamba`
+    /// `@nn.compact __call__`.  `d` is the block's input feature width; the inner SSMs run at the
+    /// expanded width `ED = ceil(expansion_factor * d)`.
+    ///
+    /// * `norm` — per `norm_type` (see [`NormWeights::init`]).
+    /// * `in_proj` Dense (d → (n_in_proj + n_gate)·ED) — lecun kernel, zero bias.
+    /// * `ssm_fwd` / `ssm_rev` — [`SsmWeights::init`] at width ED (the reverse half's config
+    ///   carries `reverse=true` / `complement`).
+    /// * `out_proj` Dense ((concatenate ? 2·ED : ED) → d) — lecun kernel, zero bias.
+    /// * `mlp` / `mlp_proj` (when `mlp_layer`) — Dense (d → dense_expansion·d) and back, lecun + zero bias.
+    pub fn init(
+        d: usize,
+        cfg: &crate::config::BidirectionalMambaConfig,
+        rng: &mut Rng,
+        dev: &B::Device,
+    ) -> Self {
+        let ed = (cfg.expansion_factor * d as f64).ceil() as usize;
+        let n_in_proj = if cfg.tie_in_proj { 1 } else { 2 };
+        let n_gate = if cfg.tie_gate { 1 } else { 2 };
+
+        let norm = NormWeights::init(d, &cfg.norm_type, dev);
+        let in_proj = Linear::init(d, (n_in_proj + n_gate) * ed, rng, dev);
+        let ssm_fwd = SsmWeights::init(ed, &cfg.inner_ssm(false), rng, dev);
+        let ssm_rev = SsmWeights::init(ed, &cfg.inner_ssm(true), rng, dev);
+        let out_proj_in = if cfg.concatenate_fwd_rev { 2 * ed } else { ed };
+        let out_proj = Linear::init(out_proj_in, d, rng, dev);
+        let mlp = if cfg.mlp_layer {
+            Some(MlpWeights {
+                mlp: Linear::init(d, cfg.dense_expansion * d, rng, dev),
+                mlp_proj: Linear::init(cfg.dense_expansion * d, d, rng, dev),
+            })
+        } else {
+            None
+        };
+
+        BidirWeights { norm, in_proj, ssm_fwd, ssm_rev, out_proj, mlp }
+    }
+
     pub fn load(
         store: &Store<B>,
         prefix: &str,

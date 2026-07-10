@@ -115,6 +115,14 @@ impl<B: Backend> BidirectionalMamba<B> {
         BidirectionalMamba { cfg, weights }
     }
 
+    /// From-scratch init with fresh seeded weights for a block whose input feature width is `d`
+    /// (the inner SSMs run at the expanded width `ceil(expansion_factor * d)`).  See
+    /// [`BidirWeights::init`] for the per-parameter init distributions.
+    pub fn init(d: usize, cfg: BidirectionalMambaConfig, rng: &mut crate::rng::Rng, dev: &B::Device) -> Self {
+        let weights = BidirWeights::init(d, &cfg, rng, dev);
+        BidirectionalMamba { cfg, weights }
+    }
+
     pub fn named(&self, prefix: &str, out: &mut Vec<(String, P<B>)>) {
         self.weights.named(prefix, out);
     }
