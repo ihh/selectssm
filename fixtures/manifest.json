@@ -319,6 +319,287 @@
       "file": "selective_fwd_cplx_pad.safetensors"
     },
     {
+      "name": "selective_relu",
+      "kind": "selective_ssm",
+      "seed": 210,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "reverse": false,
+        "complement": false,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_rank": 2,
+        "dt_proj": true,
+        "shift_conv_size": 3,
+        "activation": "relu"
+      },
+      "param_shapes": {
+        "A_log": [
+          8,
+          8
+        ],
+        "BC/bias": [
+          16
+        ],
+        "BC/kernel": [
+          8,
+          16
+        ],
+        "D": [
+          8
+        ],
+        "dt/bias": [
+          2
+        ],
+        "dt/kernel": [
+          8,
+          2
+        ],
+        "dt_proj/bias": [
+          8
+        ],
+        "dt_proj/kernel": [
+          2,
+          8
+        ],
+        "shift_conv/kernel": [
+          3,
+          1,
+          8
+        ]
+      },
+      "file": "selective_relu.safetensors"
+    },
+    {
+      "name": "selective_gelu",
+      "kind": "selective_ssm",
+      "seed": 211,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "reverse": false,
+        "complement": false,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_rank": 2,
+        "dt_proj": true,
+        "shift_conv_size": 3,
+        "activation": "gelu"
+      },
+      "param_shapes": {
+        "A_log": [
+          8,
+          8
+        ],
+        "BC/bias": [
+          16
+        ],
+        "BC/kernel": [
+          8,
+          16
+        ],
+        "D": [
+          8
+        ],
+        "dt/bias": [
+          2
+        ],
+        "dt/kernel": [
+          8,
+          2
+        ],
+        "dt_proj/bias": [
+          8
+        ],
+        "dt_proj/kernel": [
+          2,
+          8
+        ],
+        "shift_conv/kernel": [
+          3,
+          1,
+          8
+        ]
+      },
+      "file": "selective_gelu.safetensors"
+    },
+    {
+      "name": "selective_dtproj_off_r1",
+      "kind": "selective_ssm",
+      "seed": 220,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "reverse": false,
+        "complement": false,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_rank": 1,
+        "dt_proj": false,
+        "shift_conv_size": 3,
+        "activation": "silu"
+      },
+      "param_shapes": {
+        "A_log": [
+          8,
+          8
+        ],
+        "BC/bias": [
+          16
+        ],
+        "BC/kernel": [
+          8,
+          16
+        ],
+        "D": [
+          8
+        ],
+        "dt/bias": [
+          1
+        ],
+        "dt/kernel": [
+          8,
+          1
+        ],
+        "shift_conv/kernel": [
+          3,
+          1,
+          8
+        ]
+      },
+      "file": "selective_dtproj_off_r1.safetensors"
+    },
+    {
+      "name": "selective_dtproj_off_rk",
+      "kind": "selective_ssm",
+      "seed": 221,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "reverse": false,
+        "complement": false,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_rank": 2,
+        "dt_proj": false,
+        "shift_conv_size": 3,
+        "activation": "silu"
+      },
+      "param_shapes": {
+        "A_log": [
+          8,
+          8
+        ],
+        "BC/bias": [
+          16
+        ],
+        "BC/kernel": [
+          8,
+          16
+        ],
+        "D": [
+          8
+        ],
+        "dt/bias": [
+          2
+        ],
+        "dt/kernel": [
+          8,
+          2
+        ],
+        "shift_conv/kernel": [
+          3,
+          1,
+          8
+        ]
+      },
+      "file": "selective_dtproj_off_rk.safetensors"
+    },
+    {
+      "name": "selective_groups",
+      "kind": "selective_ssm",
+      "seed": 230,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "reverse": false,
+        "complement": false,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 2,
+        "dt_rank": 2,
+        "dt_proj": true,
+        "shift_conv_size": 3,
+        "activation": "silu"
+      },
+      "param_shapes": {
+        "A_log": [
+          8,
+          8
+        ],
+        "BC/bias": [
+          16
+        ],
+        "BC/kernel": [
+          8,
+          16
+        ],
+        "D": [
+          8
+        ],
+        "dt/bias": [
+          2
+        ],
+        "dt/kernel": [
+          8,
+          2
+        ],
+        "dt_proj/bias": [
+          8
+        ],
+        "dt_proj/kernel": [
+          2,
+          8
+        ],
+        "shift_conv/kernel": [
+          3,
+          1,
+          8
+        ]
+      },
+      "file": "selective_groups.safetensors"
+    },
+    {
       "name": "bidirectional_real",
       "kind": "bidirectional",
       "seed": 305,
@@ -338,7 +619,10 @@
         "concatenate_fwd_rev": true,
         "activation": "silu",
         "norm_type": "rms",
+        "bn_momentum": 0.9,
         "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
         "use_complex_ssm": false,
         "chunk_size": 4,
         "n_channel_groups": 1,
@@ -452,7 +736,10 @@
         "concatenate_fwd_rev": true,
         "activation": "silu",
         "norm_type": "rms",
+        "bn_momentum": 0.9,
         "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
         "use_complex_ssm": true,
         "chunk_size": 4,
         "n_channel_groups": 1,
@@ -561,6 +848,842 @@
       "file": "bidirectional_cplx.safetensors"
     },
     {
+      "name": "bidirectional_layernorm",
+      "kind": "bidirectional",
+      "seed": 500,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": false,
+        "tie_in_proj": false,
+        "tie_gate": false,
+        "concatenate_fwd_rev": true,
+        "activation": "silu",
+        "norm_type": "layer",
+        "bn_momentum": 0.9,
+        "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "LayerNorm_0/bias": [
+          8
+        ],
+        "LayerNorm_0/scale": [
+          8
+        ],
+        "in_proj/bias": [
+          64
+        ],
+        "in_proj/kernel": [
+          8,
+          64
+        ],
+        "out_proj/bias": [
+          8
+        ],
+        "out_proj/kernel": [
+          32,
+          8
+        ],
+        "ssm_fwd/A_log": [
+          16,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_fwd/D": [
+          16
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          16
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ],
+        "ssm_rev/A_log": [
+          16,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_rev/D": [
+          16
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          16
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ]
+      },
+      "file": "bidirectional_layernorm.safetensors"
+    },
+    {
+      "name": "bidirectional_none",
+      "kind": "bidirectional",
+      "seed": 501,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": false,
+        "tie_in_proj": false,
+        "tie_gate": false,
+        "concatenate_fwd_rev": true,
+        "activation": "silu",
+        "norm_type": "none",
+        "bn_momentum": 0.9,
+        "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "in_proj/bias": [
+          64
+        ],
+        "in_proj/kernel": [
+          8,
+          64
+        ],
+        "out_proj/bias": [
+          8
+        ],
+        "out_proj/kernel": [
+          32,
+          8
+        ],
+        "ssm_fwd/A_log": [
+          16,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_fwd/D": [
+          16
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          16
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ],
+        "ssm_rev/A_log": [
+          16,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_rev/D": [
+          16
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          16
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ]
+      },
+      "file": "bidirectional_none.safetensors"
+    },
+    {
+      "name": "bidirectional_emptynorm",
+      "kind": "bidirectional",
+      "seed": 502,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": false,
+        "tie_in_proj": false,
+        "tie_gate": false,
+        "concatenate_fwd_rev": true,
+        "activation": "silu",
+        "norm_type": "",
+        "bn_momentum": 0.9,
+        "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "in_proj/bias": [
+          64
+        ],
+        "in_proj/kernel": [
+          8,
+          64
+        ],
+        "out_proj/bias": [
+          8
+        ],
+        "out_proj/kernel": [
+          32,
+          8
+        ],
+        "ssm_fwd/A_log": [
+          16,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_fwd/D": [
+          16
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          16
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ],
+        "ssm_rev/A_log": [
+          16,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_rev/D": [
+          16
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          16
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ]
+      },
+      "file": "bidirectional_emptynorm.safetensors"
+    },
+    {
+      "name": "bidirectional_groupnorm",
+      "kind": "bidirectional",
+      "seed": 520,
+      "input_shape": [
+        2,
+        16,
+        32
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": false,
+        "tie_in_proj": false,
+        "tie_gate": false,
+        "concatenate_fwd_rev": true,
+        "activation": "silu",
+        "norm_type": "group",
+        "bn_momentum": 0.9,
+        "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "GroupNorm_0/bias": [
+          32
+        ],
+        "GroupNorm_0/scale": [
+          32
+        ],
+        "in_proj/bias": [
+          256
+        ],
+        "in_proj/kernel": [
+          32,
+          256
+        ],
+        "out_proj/bias": [
+          32
+        ],
+        "out_proj/kernel": [
+          128,
+          32
+        ],
+        "ssm_fwd/A_log": [
+          64,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          64,
+          16
+        ],
+        "ssm_fwd/D": [
+          64
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          64,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          64
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          64
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          64
+        ],
+        "ssm_rev/A_log": [
+          64,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          64,
+          16
+        ],
+        "ssm_rev/D": [
+          64
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          64,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          64
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          64
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          64
+        ]
+      },
+      "file": "bidirectional_groupnorm.safetensors"
+    },
+    {
+      "name": "bidirectional_batchnorm",
+      "kind": "bidirectional",
+      "seed": 530,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": false,
+        "tie_in_proj": false,
+        "tie_gate": false,
+        "concatenate_fwd_rev": true,
+        "activation": "silu",
+        "norm_type": "batch",
+        "bn_momentum": 0.9,
+        "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "BatchNorm_0/bias": [
+          8
+        ],
+        "BatchNorm_0/scale": [
+          8
+        ],
+        "in_proj/bias": [
+          64
+        ],
+        "in_proj/kernel": [
+          8,
+          64
+        ],
+        "out_proj/bias": [
+          8
+        ],
+        "out_proj/kernel": [
+          32,
+          8
+        ],
+        "ssm_fwd/A_log": [
+          16,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_fwd/D": [
+          16
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          16
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ],
+        "ssm_rev/A_log": [
+          16,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_rev/D": [
+          16
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          16
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ]
+      },
+      "file": "bidirectional_batchnorm.safetensors"
+    },
+    {
+      "name": "bidirectional_mlp",
+      "kind": "bidirectional",
+      "seed": 540,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": false,
+        "tie_in_proj": false,
+        "tie_gate": false,
+        "concatenate_fwd_rev": true,
+        "activation": "silu",
+        "norm_type": "rms",
+        "bn_momentum": 0.9,
+        "mlp_layer": true,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "RMSNorm_0/scale": [
+          8
+        ],
+        "in_proj/bias": [
+          64
+        ],
+        "in_proj/kernel": [
+          8,
+          64
+        ],
+        "mlp/bias": [
+          16
+        ],
+        "mlp/kernel": [
+          8,
+          16
+        ],
+        "mlp_proj/bias": [
+          8
+        ],
+        "mlp_proj/kernel": [
+          16,
+          8
+        ],
+        "out_proj/bias": [
+          8
+        ],
+        "out_proj/kernel": [
+          32,
+          8
+        ],
+        "ssm_fwd/A_log": [
+          16,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_fwd/D": [
+          16
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          16
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ],
+        "ssm_rev/A_log": [
+          16,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_rev/D": [
+          16
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          16
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ]
+      },
+      "file": "bidirectional_mlp.safetensors"
+    },
+    {
+      "name": "bidirectional_tied",
+      "kind": "bidirectional",
+      "seed": 550,
+      "input_shape": [
+        2,
+        16,
+        8
+      ],
+      "loss": "sum(y**2)",
+      "config": {
+        "hidden_features": 8,
+        "expansion_factor": 2.0,
+        "dt_rank": 2,
+        "complement": true,
+        "tie_in_proj": true,
+        "tie_gate": true,
+        "concatenate_fwd_rev": false,
+        "activation": "silu",
+        "norm_type": "rms",
+        "bn_momentum": 0.9,
+        "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
+        "use_complex_ssm": false,
+        "chunk_size": 4,
+        "n_channel_groups": 1,
+        "dt_proj": true,
+        "shift_conv_size": 3
+      },
+      "param_shapes": {
+        "RMSNorm_0/scale": [
+          8
+        ],
+        "in_proj/bias": [
+          32
+        ],
+        "in_proj/kernel": [
+          8,
+          32
+        ],
+        "out_proj/bias": [
+          8
+        ],
+        "out_proj/kernel": [
+          16,
+          8
+        ],
+        "ssm_fwd/A_log": [
+          16,
+          8
+        ],
+        "ssm_fwd/BC/bias": [
+          16
+        ],
+        "ssm_fwd/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_fwd/D": [
+          16
+        ],
+        "ssm_fwd/dt/bias": [
+          2
+        ],
+        "ssm_fwd/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_fwd/dt_proj/bias": [
+          16
+        ],
+        "ssm_fwd/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_fwd/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ],
+        "ssm_rev/A_log": [
+          16,
+          8
+        ],
+        "ssm_rev/BC/bias": [
+          16
+        ],
+        "ssm_rev/BC/kernel": [
+          16,
+          16
+        ],
+        "ssm_rev/D": [
+          16
+        ],
+        "ssm_rev/dt/bias": [
+          2
+        ],
+        "ssm_rev/dt/kernel": [
+          16,
+          2
+        ],
+        "ssm_rev/dt_proj/bias": [
+          16
+        ],
+        "ssm_rev/dt_proj/kernel": [
+          2,
+          16
+        ],
+        "ssm_rev/shift_conv/kernel": [
+          3,
+          1,
+          16
+        ]
+      },
+      "file": "bidirectional_tied.safetensors"
+    },
+    {
       "name": "rcps_real",
       "kind": "rcps",
       "seed": 407,
@@ -580,7 +1703,10 @@
         "concatenate_fwd_rev": true,
         "activation": "silu",
         "norm_type": "rms",
+        "bn_momentum": 0.9,
         "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
         "use_complex_ssm": false,
         "chunk_size": 4,
         "n_channel_groups": 1,
@@ -695,7 +1821,10 @@
         "concatenate_fwd_rev": true,
         "activation": "silu",
         "norm_type": "rms",
+        "bn_momentum": 0.9,
         "mlp_layer": false,
+        "dense_expansion": 2,
+        "mlp_dropout_rate": 0.1,
         "use_complex_ssm": true,
         "chunk_size": 4,
         "n_channel_groups": 1,
