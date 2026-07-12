@@ -25,6 +25,7 @@ pub mod chunked_scan;
 pub mod remat;
 pub mod selective_ssm;
 pub mod bidirectional;
+pub mod fused;
 
 #[cfg(feature = "rcps")]
 pub mod rcps;

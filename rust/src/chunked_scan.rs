@@ -235,6 +235,89 @@ pub(crate) fn within_chunk_hs<B: ScanBackend>(
     }
 }
 
+/// Branchless minimax `f32` exp for the CPU/host hot loops (Cephes `expf`, ~1 ULP).  The stock
+/// `f32::exp` on wasm is software libm — scalar, branchy, with an f64 core — and the SSM decay
+/// `exp(a·dt)` calls it ~`2·B·L·ED·N` times per forward (~5.67M at the deploy shape), dominating
+/// the CPU cost.  This inlinable, branch-free form avoids that call/branch/f64 overhead AND
+/// autovectorises under `simd128`.  Deterministic (fixed polynomial + a bit-field `ldexp`), so the
+/// cross-engine bit-stability the deploy path relies on is preserved.  Accuracy (~1e-7 rel) is far
+/// inside both the internal `<1e-4` fused-parity gate and the `~1e-3` JAX-golden gate.
+#[inline(always)]
+pub(crate) fn fast_exp(x: f32) -> f32 {
+    // Clamp to the f32 exp domain (saturate like libm: ~0 below −87, ~max above +88).  The SSM
+    // hot path has x ≤ 0, but keep it general/safe.
+    let x = x.clamp(-87.336_54, 88.722_84);
+    const LOG2E: f32 = 1.442_695_04;
+    const C1: f32 = 0.693_359_375; // ln2 hi
+    const C2: f32 = -2.121_944_4e-4; // ln2 lo (C1 − C2·… splits ln2 for extra precision)
+    // Range reduce: exp(x) = 2^k · exp(r),  k = round(x·log2e),  r = x − k·ln2 ∈ [−ln2/2, ln2/2].
+    let kf = (x * LOG2E + 0.5).floor();
+    let r = x - kf * C1 - kf * C2;
+    // Minimax polynomial for exp(r) (Cephes expf coefficients).
+    let mut p = 1.987_569_15e-4_f32;
+    p = p * r + 1.398_199_95e-3;
+    p = p * r + 8.333_452e-3;
+    p = p * r + 4.166_579_6e-2;
+    p = p * r + 1.666_666_5e-1;
+    p = p * r + 5.000_000_1e-1;
+    let er = p * (r * r) + r + 1.0;
+    // Multiply by 2^k via the exponent bit-field: (k + 127) << 23.  After the clamp, k ∈ [−126,128].
+    let pow2 = f32::from_bits(((kf as i32 + 127) as u32) << 23);
+    er * pow2
+}
+
+/// Direct sequential selective-scan for host (CPU) backends, REAL mode (no rotary).  Extracts the
+/// inputs to host `f32` once and runs the exact recurrence
+///   `h[t] = exp(a·dt[t])·h[t-1] + b[t]·u[t]·dt[t]`,   `y[t] = Σ_n c[t,n]·h[t,·,n]`
+/// in tight scalar loops with a SINGLE output allocation.  The generic [`assoc_scan0`] Hillis scan
+/// instead emits ~`O(n_chunks·log cs)` full-tensor `cat`/mul allocations per forward, and on the
+/// ndarray backend that allocation/dispatch overhead — not the (~5 ms) arithmetic — dominates cost
+/// (~340 ms at L=369).  Algebraically this IS the reference recurrence, so it matches
+/// [`ssm_chunked_scan`] to `f32` tolerance; used only for the plain-`NdArray` inference path
+/// (training's autodiff forward goes through `scan_collect`/`chunk_vjp`, untouched).  Complex/RoPE
+/// mode is left to the reference scan.
+pub(crate) fn sequential_scan_host<B: Backend>(
+    u: Tensor<B, 3>,  // (B,L,D)
+    a: Tensor<B, 2>,  // (D,N)
+    b: Tensor<B, 3>,  // (B,L,N)
+    c: Tensor<B, 3>,  // (B,L,N)
+    dt: Tensor<B, 3>, // (B,L,D)
+) -> Tensor<B, 3> {
+    let dev = u.device();
+    let [bb, l, d] = u.dims();
+    let n = a.dims()[1];
+    let uv = u.into_data().to_vec::<f32>().unwrap();
+    let av = a.into_data().to_vec::<f32>().unwrap();
+    let bv = b.into_data().to_vec::<f32>().unwrap();
+    let cv = c.into_data().to_vec::<f32>().unwrap();
+    let dv = dt.into_data().to_vec::<f32>().unwrap();
+    let mut y = vec![0f32; bb * l * d];
+    let mut hstate = vec![0f32; d * n]; // carried SSM state (D,N), reset per batch element
+    for bi in 0..bb {
+        hstate.iter_mut().for_each(|x| *x = 0.0);
+        for t in 0..l {
+            let base_ld = (bi * l + t) * d;
+            let base_ln = (bi * l + t) * n;
+            for di in 0..d {
+                let u_v = uv[base_ld + di];
+                let dt_v = dv[base_ld + di];
+                let hoff = di * n;
+                let aoff = di * n;
+                let mut acc = 0f32;
+                for ni in 0..n {
+                    let da = fast_exp(av[aoff + ni] * dt_v);
+                    let db = bv[base_ln + ni] * u_v * dt_v;
+                    let hh = da * hstate[hoff + ni] + db;
+                    hstate[hoff + ni] = hh;
+                    acc += cv[base_ln + ni] * hh;
+                }
+                y[base_ld + di] = acc;
+            }
+        }
+    }
+    Tensor::from_data(TensorData::new(y, [bb, l, d]), &dev)
+}
+
 /// Chunked selective-scan (reference / non-rematerializing).
 ///
 /// * `u`      (B, L, D)   --- SSM input (post conv + activation)
@@ -371,5 +454,37 @@ mod tests {
             let err = m.iter().zip(&hh).fold(0f32, |a, (&x, &y)| a.max((x - y).abs())) / max_abs;
             assert!(err < 1e-5, "matrix vs hillis rel err {err:.2e} (complex={})", th.is_some());
         }
+    }
+
+    // The fast host recurrence (real mode) must agree with the Hillis scan to f32 tolerance,
+    // including a non-chunk-multiple length and multiple batch elements.  This is the parity
+    // guard for the NdArray inference fast path.
+    #[test]
+    fn sequential_host_matches_hillis() {
+        let dev = Default::default();
+        let (bb, l, d, n, cs) = (2usize, 10usize, 3usize, 4usize, 4usize);
+        let rnd = |shape: [usize; 3], seed: u64| {
+            let k: usize = shape.iter().product();
+            let v: Vec<f32> = (0..k)
+                .map(|i| (((i as u64 * 2654435761 + seed) % 1000) as f32) / 1000.0 - 0.5)
+                .collect();
+            Tensor::<B, 3>::from_data(TensorData::new(v, shape), &dev)
+        };
+        let a = Tensor::<B, 2>::from_data(
+            TensorData::new((0..d * n).map(|i| -((i % n + 1) as f32)).collect(), [d, n]),
+            &dev,
+        );
+        let dt = rnd([bb, l, d], 7).abs() + 0.1;
+        let (u, bp, cp) = (rnd([bb, l, d], 1), rnd([bb, l, n], 2), rnd([bb, l, n], 3));
+        let hillis = ssm_chunked_scan(
+            u.clone(), a.clone(), bp.clone(), cp.clone(), dt.clone(), None, cs, ScanAlgo::Hillis,
+        )
+        .into_data()
+        .to_vec::<f32>()
+        .unwrap();
+        let seq = sequential_scan_host(u, a, bp, cp, dt).into_data().to_vec::<f32>().unwrap();
+        let max_abs = hillis.iter().fold(0f32, |a, &x| a.max(x.abs())).max(1e-6);
+        let err = hillis.iter().zip(&seq).fold(0f32, |a, (&x, &y)| a.max((x - y).abs())) / max_abs;
+        assert!(err < 1e-5, "sequential-host vs hillis rel err {err:.2e}");
     }
 }

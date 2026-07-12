@@ -110,7 +110,27 @@ macro_rules! impl_scan_backend_reference {
     };
 }
 
-impl_scan_backend_reference!(burn::backend::NdArray);
+// NdArray (CPU inference): the generic Hillis scan's per-step tensor allocations dominate cost
+// (~4000 tiny allocs/forward → ~340 ms at L=369, vs ~5 ms of real arithmetic).  In real mode use
+// the direct host recurrence `sequential_scan_host` (one output allocation); fall back to the
+// reference scan for the complex/RoPE path.  Training (Autodiff<NdArray>) uses `scan_collect`/
+// `chunk_vjp`, NOT this method, so gradients are unaffected.
+impl ScanBackend for burn::backend::NdArray {
+    fn chunked_scan(
+        opts: ScanOpts,
+        u: Tensor<Self, 3>,
+        a: Tensor<Self, 2>,
+        b: Tensor<Self, 3>,
+        c: Tensor<Self, 3>,
+        dt: Tensor<Self, 3>,
+        theta: Option<Tensor<Self, 3>>,
+    ) -> Tensor<Self, 3> {
+        match theta {
+            None => crate::chunked_scan::sequential_scan_host(u, a, b, c, dt),
+            Some(_) => ssm_chunked_scan(u, a, b, c, dt, theta, opts.chunk_size, opts.algo),
+        }
+    }
+}
 
 // The wgpu backend gets the reference `chunked_scan` plus, when built `--features cubecl`
 // (and not `fusion`, which would change the backend type), the custom GPU scan kernel.

@@ -181,3 +181,115 @@ impl<B: Backend> BidirectionalMamba<B> {
         x
     }
 }
+
+impl BidirectionalMamba<burn::backend::NdArray<f32>> {
+    /// Fused host (CPU) forward specialized for the concrete `NdArray<f32>` backend: runs the
+    /// whole block in tight scalar loops with a single output allocation, eliminating the
+    /// generic forward's ~35 per-op tensor allocations/dispatches (see [`crate::fused`]).  For
+    /// any config outside the scoped envelope (real / rms / silu / no-mlp / dt_proj /
+    /// concatenate / untied) it transparently falls back to the generic [`Self::forward`], so it
+    /// is always a safe drop-in.  Algebraically identical to `forward`, matching to `f32`
+    /// tolerance (parity-tested below).  Autodiff/Wgpu tiers keep the generic `forward`.
+    pub fn forward_fused(
+        &self,
+        x: Tensor<burn::backend::NdArray<f32>, 3>,
+    ) -> Tensor<burn::backend::NdArray<f32>, 3> {
+        crate::fused::bidirectional_forward_fused_ndarray(self, x)
+    }
+}
+
+#[cfg(test)]
+mod fused_parity_tests {
+    use super::*;
+    use crate::config::BidirectionalMambaConfig;
+    use crate::rng::Rng;
+    use burn::backend::NdArray;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::tensor::TensorData;
+
+    type B = NdArray<f32>;
+
+    /// The deployed move-type block config (d_model supplied at init).
+    fn move_type_cfg() -> BidirectionalMambaConfig {
+        BidirectionalMambaConfig {
+            hidden_features: 8,
+            expansion_factor: 2.0,
+            dt_rank: 2,
+            complement: false,
+            tie_in_proj: false,
+            tie_gate: false,
+            concatenate_fwd_rev: true,
+            activation: "silu".to_string(),
+            norm_type: "rms".to_string(),
+            bn_momentum: 0.9,
+            mlp_layer: false,
+            dense_expansion: 2,
+            mlp_dropout_rate: 0.1,
+            use_complex_ssm: false,
+            chunk_size: None,
+            n_channel_groups: 1,
+            use_remat: true,
+            scan_algo: crate::config::ScanAlgo::Hillis,
+            dt_proj: true,
+            shift_conv_size: 3,
+        }
+    }
+
+    fn rand_input(nodes: usize, cols: usize, feat: usize, seed: u64, dev: &NdArrayDevice) -> Tensor<B, 3> {
+        let k = nodes * cols * feat;
+        let v: Vec<f32> = (0..k)
+            .map(|i| (((i as u64).wrapping_mul(2654435761).wrapping_add(seed) % 2000) as f32) / 1000.0 - 1.0)
+            .collect();
+        Tensor::<B, 3>::from_data(TensorData::new(v, [nodes, cols, feat]), dev)
+    }
+
+    fn max_rel_err(a: &[f32], b: &[f32]) -> f32 {
+        assert_eq!(a.len(), b.len());
+        let max_abs = a.iter().fold(0f32, |m, &x| m.max(x.abs())).max(1e-6);
+        a.iter().zip(b).fold(0f32, |m, (&x, &y)| m.max((x - y).abs())) / max_abs
+    }
+
+    /// The fused NdArray forward must match the generic forward to f32 tolerance, at the deployed
+    /// config, over several shapes (incl. non-chunk-multiple cols) and d_model values.
+    #[test]
+    fn fused_matches_generic() {
+        let dev = NdArrayDevice::Cpu;
+        // (nodes, cols, d_model): cols=40 (non-degenerate), a non-multiple length (37), a small
+        // and a larger d_model; more nodes to exercise the batch loop.
+        let cases = [
+            (15usize, 40usize, 32usize),
+            (15, 37, 32),
+            (8, 40, 16),
+            (4, 53, 48),
+            (1, 40, 32),
+        ];
+        for (ni, (nodes, cols, d)) in cases.iter().enumerate() {
+            let mut rng = Rng::new(1234 + ni as u64);
+            let block = BidirectionalMamba::<B>::init(*d, move_type_cfg(), &mut rng, &dev);
+            let x = rand_input(*nodes, *cols, *d, 7 + ni as u64, &dev);
+            let generic = block.forward(x.clone()).into_data().to_vec::<f32>().unwrap();
+            let fused = block.forward_fused(x).into_data().to_vec::<f32>().unwrap();
+            let err = max_rel_err(&generic, &fused);
+            eprintln!("fused vs generic: nodes={nodes} cols={cols} d={d} -> rel err {err:.3e}");
+            assert!(
+                err < 1e-4,
+                "fused vs generic rel err {err:.2e} at nodes={nodes} cols={cols} d={d}"
+            );
+        }
+    }
+
+    /// A config OUTSIDE the fast envelope must fall back to the generic forward and be bit-exact.
+    #[test]
+    fn fused_falls_back_bit_exact() {
+        let dev = NdArrayDevice::Cpu;
+        let mut cfg = move_type_cfg();
+        cfg.norm_type = "layer".to_string(); // not rms → ineligible
+        let mut rng = Rng::new(99);
+        let block = BidirectionalMamba::<B>::init(32, cfg, &mut rng, &dev);
+        let x = rand_input(6, 40, 32, 3, &dev);
+        let generic = block.forward(x.clone()).into_data().to_vec::<f32>().unwrap();
+        let fused = block.forward_fused(x).into_data().to_vec::<f32>().unwrap();
+        // Fallback returns the generic result verbatim → bit-identical.
+        assert_eq!(generic, fused, "fallback must return the generic result bit-for-bit");
+    }
+}
